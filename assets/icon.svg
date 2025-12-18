@@ -1,0 +1,22 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background with rounded corners -->
+  <rect width="1024" height="1024" rx="220" fill="url(#bg-gradient)"/>
+
+  <!-- Three overlapping circles representing the 3 AIs -->
+  <!-- ChatGPT circle (green) -->
+  <circle cx="400" cy="420" r="220" fill="#10a37f" opacity="0.9"/>
+
+  <!-- Claude circle (orange/terracotta) -->
+  <circle cx="624" cy="420" r="220" fill="#d97757" opacity="0.9"/>
+
+  <!-- Gemini circle (blue) -->
+  <circle cx="512" cy="620" r="220" fill="#4285f4" opacity="0.9"/>
+
+  <!-- Gradients -->
+  <defs>
+    <linearGradient id="bg-gradient" x1="0" y1="0" x2="1024" y2="1024">
+      <stop offset="0%" stop-color="#1a1a2e"/>
+      <stop offset="100%" stop-color="#16213e"/>
+    </linearGradient>
+  </defs>
+</svg>

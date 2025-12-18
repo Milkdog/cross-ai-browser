@@ -1,0 +1,32 @@
+{
+  "name": "cross-ai-browser",
+  "version": "1.0.0",
+  "description": "A desktop app for switching between AI chat services",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --mac",
+    "dev": "electron . --enable-logging"
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
+    "icon-gen": "^5.0.0"
+  },
+  "build": {
+    "appId": "com.crossai.browser",
+    "productName": "Cross AI Browser",
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "assets/icon.icns"
+    },
+    "directories": {
+      "output": "dist"
+    }
+  },
+  "dependencies": {
+    "electron-store": "^8.2.0"
+  }
+}

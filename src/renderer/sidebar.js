@@ -1,34 +1,16 @@
 console.log('sidebar.js loaded');
 
 let activeServiceId = null;
+let allTabs = [];
 
 async function init() {
   console.log('init() called');
-  const services = await window.electronAPI.getServices();
-  console.log('services loaded:', services);
-  const container = document.getElementById('service-buttons');
 
-  services.forEach((service, index) => {
-    const btn = document.createElement('button');
-    btn.className = 'service-btn';
-    btn.dataset.service = service.id;
-    btn.dataset.shortcut = `⌘${index + 1}`;
-    btn.title = `${service.name} (Cmd+${index + 1})`;
+  // Load all tabs (web services + terminals)
+  allTabs = await window.electronAPI.getAllTabs();
+  console.log('tabs loaded:', allTabs);
 
-    // Create icon with logo SVG using safe DOM insertion
-    const iconDiv = document.createElement('div');
-    iconDiv.className = 'service-icon';
-    const template = document.createElement('template');
-    template.innerHTML = getServiceIcon(service.id);
-    iconDiv.appendChild(template.content.cloneNode(true));
-    btn.appendChild(iconDiv);
-
-    btn.addEventListener('click', () => {
-      window.electronAPI.switchService(service.id);
-    });
-
-    container.appendChild(btn);
-  });
+  renderTabs(allTabs);
 
   // Set initial active state
   activeServiceId = await window.electronAPI.getActiveService();
@@ -40,6 +22,13 @@ async function init() {
     updateActiveState(serviceId);
   });
 
+  // Listen for tab updates (when terminals are added/removed)
+  window.electronAPI.onTabsUpdated((tabs) => {
+    allTabs = tabs;
+    renderTabs(tabs);
+    updateActiveState(activeServiceId);
+  });
+
   // Reload button
   document.getElementById('reload-btn').addEventListener('click', () => {
     if (activeServiceId) {
@@ -47,11 +36,81 @@ async function init() {
     }
   });
 
-  // Settings button - opens separate settings window
-  const settingsBtn = document.getElementById('settings-btn');
-  settingsBtn.onclick = () => {
+  // Settings button
+  document.getElementById('settings-btn').addEventListener('click', () => {
     window.electronAPI.openSettings();
-  };
+  });
+
+  // Add terminal button
+  document.getElementById('add-terminal-btn').addEventListener('click', async () => {
+    const result = await window.electronAPI.addTerminal();
+    if (result.success) {
+      console.log('Terminal created:', result.terminalId);
+    }
+  });
+}
+
+function renderTabs(tabs) {
+  const container = document.getElementById('service-buttons');
+  container.textContent = ''; // Clear safely
+
+  tabs.forEach((tab, index) => {
+    const btn = document.createElement('button');
+    btn.className = 'service-btn';
+    btn.dataset.service = tab.id;
+    btn.dataset.type = tab.type;
+
+    if (tab.shortcut) {
+      btn.dataset.shortcut = tab.shortcut;
+      btn.title = `${tab.name} (Cmd+${index + 1})`;
+    } else {
+      btn.title = tab.name;
+    }
+
+    // Create icon container
+    const iconDiv = document.createElement('div');
+    iconDiv.className = 'service-icon';
+
+    // Use template for safe SVG insertion
+    const template = document.createElement('template');
+
+    if (tab.type === 'web') {
+      // Web service icons
+      template.innerHTML = getServiceIcon(tab.id);
+      iconDiv.appendChild(template.content.cloneNode(true));
+    } else if (tab.type === 'terminal') {
+      // Terminal icon
+      template.innerHTML = getTerminalIcon();
+      iconDiv.appendChild(template.content.cloneNode(true));
+
+      // Add name label below icon
+      const nameLabel = document.createElement('div');
+      nameLabel.className = 'terminal-name';
+      nameLabel.textContent = tab.name.length > 6 ? tab.name.substring(0, 6) + '...' : tab.name;
+      btn.appendChild(nameLabel);
+    }
+
+    btn.insertBefore(iconDiv, btn.firstChild);
+
+    // Add close button for closeable tabs
+    if (tab.closeable) {
+      const closeBtn = document.createElement('div');
+      closeBtn.className = 'close-tab-btn';
+      closeBtn.textContent = '×';
+      closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        window.electronAPI.closeTerminal(tab.id);
+      });
+      btn.appendChild(closeBtn);
+    }
+
+    // Click handler
+    btn.addEventListener('click', () => {
+      window.electronAPI.switchService(tab.id);
+    });
+
+    container.appendChild(btn);
+  });
 }
 
 function getServiceIcon(serviceId) {
@@ -71,6 +130,13 @@ function getServiceIcon(serviceId) {
     </svg>`
   };
   return icons[serviceId] || `<span>${serviceId[0].toUpperCase()}</span>`;
+}
+
+function getTerminalIcon() {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="4 17 10 11 4 5"></polyline>
+    <line x1="12" y1="19" x2="20" y2="19"></line>
+  </svg>`;
 }
 
 function updateActiveState(serviceId) {

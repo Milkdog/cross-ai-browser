@@ -1,0 +1,31 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #1e1e1e;
+}
+
+#terminal-container {
+  width: 100%;
+  height: 100%;
+  padding: 8px;
+}
+
+/* Override xterm styles for better appearance */
+.xterm {
+  padding: 0;
+}
+
+.xterm-viewport {
+  background-color: #1e1e1e !important;
+}
+
+.xterm-screen {
+  padding: 0;
+}

@@ -13,7 +13,7 @@
       <!-- Service buttons will be injected here -->
     </div>
     <div class="add-terminal-container">
-      <button class="add-terminal-btn" id="add-terminal-btn" title="Add Claude Code Terminal">
+      <button class="add-terminal-btn" id="add-terminal-btn" title="New Claude Code Session">
         <div class="add-terminal-icon">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="4 17 10 11 4 5"/>
@@ -21,7 +21,16 @@
           </svg>
           <span class="add-badge">+</span>
         </div>
-        <span class="add-terminal-label">Claude</span>
+        <span class="add-terminal-label">New</span>
+      </button>
+      <button class="add-terminal-btn resume-btn" id="resume-terminal-btn" title="Resume Previous Session">
+        <div class="add-terminal-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+            <path d="M3 3v5h5"/>
+          </svg>
+        </div>
+        <span class="add-terminal-label">Resume</span>
       </button>
     </div>
     <div class="sidebar-footer">

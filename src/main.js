@@ -470,7 +470,7 @@ function createBrowserView(service) {
   });
 }
 
-function createTerminalTab(terminalId, name, cwd, switchTo = true) {
+function createTerminalTab(terminalId, name, cwd, switchTo = true, mode = 'normal') {
   // Create BrowserView for terminal
   const view = new BrowserView({
     webPreferences: {
@@ -487,8 +487,8 @@ function createTerminalTab(terminalId, name, cwd, switchTo = true) {
   const terminalHtmlPath = path.join(__dirname, 'renderer', 'terminal.html');
   view.webContents.loadURL(`file://${terminalHtmlPath}?id=${terminalId}`);
 
-  // Add to terminal tabs list
-  const tabData = { id: terminalId, name, cwd };
+  // Add to terminal tabs list (mode is stored for PTY spawning)
+  const tabData = { id: terminalId, name, cwd, mode };
   terminalTabs.push(tabData);
 
   // Persist terminal tabs
@@ -507,7 +507,7 @@ function createTerminalTab(terminalId, name, cwd, switchTo = true) {
   return terminalId;
 }
 
-function setupTerminalPty(terminalId, cwd, cols = 80, rows = 30, resume = false) {
+function setupTerminalPty(terminalId, cwd, cols = 80, rows = 30, mode = 'normal') {
   const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/bash';
 
   // Initialize output buffer for this terminal
@@ -522,8 +522,16 @@ function setupTerminalPty(terminalId, cwd, cols = 80, rows = 30, resume = false)
     lastMessage: ''     // Store the last Claude message for notification
   };
 
-  // Build claude command - use --continue flag if resuming
-  const claudeCmd = resume ? 'claude --continue' : 'claude';
+  // Build claude command based on mode
+  // - 'normal': fresh session
+  // - 'continue': continue most recent session (--continue)
+  // - 'resume': interactive session picker (--resume)
+  let claudeCmd = 'claude';
+  if (mode === 'continue' || mode === true) {
+    claudeCmd = 'claude --continue';
+  } else if (mode === 'resume') {
+    claudeCmd = 'claude --resume';
+  }
 
   try {
     const ptyProcess = pty.spawn(shell, ['-c', claudeCmd], {
@@ -630,8 +638,8 @@ function setupTerminalPty(terminalId, cwd, cols = 80, rows = 30, resume = false)
 }
 
 // Alias for spawning PTY with specific size
-function setupTerminalPtyWithSize(terminalId, cwd, cols, rows, resume = false) {
-  return setupTerminalPty(terminalId, cwd, cols, rows, resume);
+function setupTerminalPtyWithSize(terminalId, cwd, cols, rows, mode = 'normal') {
+  return setupTerminalPty(terminalId, cwd, cols, rows, mode);
 }
 
 function closeTerminalTab(terminalId) {
@@ -908,6 +916,28 @@ ipcMain.handle('add-terminal', async () => {
   return { success: false };
 });
 
+// Create a new terminal with interactive session picker (--resume)
+ipcMain.handle('resume-terminal-session', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    properties: ['openDirectory'],
+    title: 'Select folder for Claude Code (Resume Session)'
+  });
+
+  if (!result.canceled && result.filePaths.length > 0) {
+    const folderPath = result.filePaths[0];
+    const folderName = path.basename(folderPath);
+    const terminalId = `terminal-${crypto.randomUUID()}`;
+
+    // Create terminal with 'resume' mode for interactive session picker
+    createTerminalTab(terminalId, `${folderName} (Resume)`, folderPath, true, 'resume');
+    updateShortcuts();
+
+    return { success: true, terminalId };
+  }
+
+  return { success: false };
+});
+
 ipcMain.on('close-terminal', async (event, terminalId) => {
   // Show confirmation dialog before closing
   const terminal = terminalTabs.find(t => t.id === terminalId);
@@ -920,7 +950,7 @@ ipcMain.on('close-terminal', async (event, terminalId) => {
     cancelId: 1,
     title: 'Close Claude Code Tab',
     message: `Close "${tabName}"?`,
-    detail: 'The Claude Code session will be terminated. You can resume it later with /resume.'
+    detail: 'The session will be terminated. Use the Resume button in the sidebar to continue a previous session.'
   });
 
   if (response === 0) {
@@ -988,7 +1018,11 @@ ipcMain.on('terminal-resize', (event, { terminalId, cols, rows }) => {
     // PTY not spawned yet - spawn it now with correct dimensions
     const terminal = terminalTabs.find(t => t.id === terminalId);
     if (terminal && terminalReadyState[terminalId]) {
-      setupTerminalPtyWithSize(terminalId, terminal.cwd, cols, rows);
+      // Use stored mode (normal, continue, or resume) for initial spawn
+      const mode = terminal.mode || 'normal';
+      setupTerminalPtyWithSize(terminalId, terminal.cwd, cols, rows, mode);
+      // Clear mode after first spawn so reloads start fresh
+      terminal.mode = 'normal';
     }
   }
 });
@@ -1041,7 +1075,7 @@ ipcMain.on('terminal-resume', (event, { terminalId }) => {
   const { cols = 80, rows = 30 } = promptState;
 
   // Spawn new PTY with --continue flag
-  setupTerminalPty(terminalId, terminal.cwd, cols, rows, true);
+  setupTerminalPty(terminalId, terminal.cwd, cols, rows, 'continue');
 });
 
 // Handle terminal close request

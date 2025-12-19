@@ -41,11 +41,19 @@ async function init() {
     window.electronAPI.openSettings();
   });
 
-  // Add terminal button
+  // Add terminal button (new session)
   document.getElementById('add-terminal-btn').addEventListener('click', async () => {
     const result = await window.electronAPI.addTerminal();
     if (result.success) {
       console.log('Terminal created:', result.terminalId);
+    }
+  });
+
+  // Resume terminal session button
+  document.getElementById('resume-terminal-btn').addEventListener('click', async () => {
+    const result = await window.electronAPI.resumeTerminalSession();
+    if (result.success) {
+      console.log('Resume terminal created:', result.terminalId);
     }
   });
 }

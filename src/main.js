@@ -908,9 +908,25 @@ ipcMain.handle('add-terminal', async () => {
   return { success: false };
 });
 
-ipcMain.on('close-terminal', (event, terminalId) => {
-  closeTerminalTab(terminalId);
-  updateShortcuts();
+ipcMain.on('close-terminal', async (event, terminalId) => {
+  // Show confirmation dialog before closing
+  const terminal = terminalTabs.find(t => t.id === terminalId);
+  const tabName = terminal ? terminal.name : 'Claude Code';
+
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'question',
+    buttons: ['Close Tab', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    title: 'Close Claude Code Tab',
+    message: `Close "${tabName}"?`,
+    detail: 'The Claude Code session will be terminated. You can resume it later with /resume.'
+  });
+
+  if (response === 0) {
+    closeTerminalTab(terminalId);
+    updateShortcuts();
+  }
 });
 
 // Terminal PTY communication

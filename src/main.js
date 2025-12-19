@@ -396,8 +396,8 @@ function createWindow() {
   }
 
   validTerminals.forEach(terminal => {
-    // Restored tabs use 'resume' mode to pick up previous session
-    createTerminalTab(terminal.id, terminal.name, terminal.cwd, false, 'resume');
+    // Restored tabs use 'continue' mode to auto-resume most recent session
+    createTerminalTab(terminal.id, terminal.name, terminal.cwd, false, 'continue');
   });
 
   // Set default active service
@@ -1053,8 +1053,8 @@ ipcMain.on('terminal-resume', (event, { terminalId }) => {
   const promptState = terminalPromptState[terminalId] || {};
   const { cols = 80, rows = 30 } = promptState;
 
-  // Spawn new PTY with --resume flag for interactive session picker
-  setupTerminalPty(terminalId, terminal.cwd, cols, rows, 'resume');
+  // Spawn new PTY with --continue flag to auto-resume most recent session
+  setupTerminalPty(terminalId, terminal.cwd, cols, rows, 'continue');
 });
 
 // Handle terminal close request

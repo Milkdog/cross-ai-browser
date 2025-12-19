@@ -37,6 +37,15 @@ Each AI service has specific selectors for detecting streaming state:
 - `npm start` - Run in development
 - `npm run build` - Build distributable .app/.dmg
 
+## CI/CD
+GitHub Actions workflow (`.github/workflows/build.yml`) runs on every push to `main`:
+- Builds the Electron app on macOS
+- Uploads DMG and ZIP as artifacts (retained 30 days)
+- Access artifacts via Actions tab → workflow run → Artifacts section
+
+## Repository
+https://github.com/Milkdog/cross-ai-browser
+
 ## File Structure
 ```
 src/
@@ -52,6 +61,23 @@ assets/
 ├── icon.svg             # Source icon (3 overlapping circles)
 └── icon.icns            # macOS app icon
 ```
+
+## Known Security Issues
+The following issues were identified during security review and should be addressed:
+
+### Critical
+1. **IPC allows arbitrary setting keys** (`src/main.js:244-246`) - Add allowlist validation for `set-setting` handler
+2. **Missing navigation security** - Add `will-navigate` handlers to BrowserViews to prevent navigation attacks
+3. **Unsafe window open handler** - Replace substring matching with strict origin-based allowlist
+
+### High
+4. **Missing sandbox** - Add `sandbox: true` to BrowserView webPreferences
+5. **IPC listener memory leak** - `onActiveServiceChanged` doesn't clean up listeners
+6. **Missing IPC input validation** - Validate `serviceId` against known services
+
+### Medium
+7. Add CSP to `settings.html`
+8. Sanitize notification preview text from webviews
 
 ## Future Plans
 - [ ] **Code signing & notarization** - Sign with Developer ID certificate for distribution without Gatekeeper warnings

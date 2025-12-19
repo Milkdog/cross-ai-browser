@@ -1,20 +1,28 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  // Service management
+  // Service/Tab management
   getServices: () => ipcRenderer.invoke('get-services'),
   getActiveService: () => ipcRenderer.invoke('get-active-service'),
-  switchService: (serviceId) => ipcRenderer.send('switch-service', serviceId),
+  switchService: (tabId) => ipcRenderer.send('switch-service', tabId),
 
-  // Tab management (includes terminals)
+  // Tab management
   getAllTabs: () => ipcRenderer.invoke('get-all-tabs'),
+  closeTab: (tabId) => ipcRenderer.send('close-tab', tabId),
+  renameTab: (tabId, newName) => ipcRenderer.invoke('rename-tab', tabId, newName),
+  reorderTabs: (draggedTabId, targetTabId, position) => ipcRenderer.send('reorder-tabs', draggedTabId, targetTabId, position),
+  showServicePicker: () => ipcRenderer.send('show-service-picker'),
+  showTabContextMenu: (tabId) => ipcRenderer.invoke('show-tab-context-menu', tabId),
+  showRenameDialog: (tabId) => ipcRenderer.invoke('show-rename-dialog', tabId),
+
+  // Legacy terminal support
   addTerminal: () => ipcRenderer.invoke('add-terminal'),
   closeTerminal: (terminalId) => ipcRenderer.send('close-terminal', terminalId),
 
   // Navigation controls
-  reloadService: (serviceId) => ipcRenderer.send('reload-service', serviceId),
-  goBack: (serviceId) => ipcRenderer.send('go-back', serviceId),
-  goForward: (serviceId) => ipcRenderer.send('go-forward', serviceId),
+  reloadService: (tabId) => ipcRenderer.send('reload-service', tabId),
+  goBack: (tabId) => ipcRenderer.send('go-back', tabId),
+  goForward: (tabId) => ipcRenderer.send('go-forward', tabId),
 
   // Settings
   getSettings: () => ipcRenderer.invoke('get-settings'),
@@ -23,7 +31,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Event listeners
   onActiveServiceChanged: (callback) => {
-    ipcRenderer.on('active-service-changed', (event, serviceId) => callback(serviceId));
+    ipcRenderer.on('active-service-changed', (event, tabId) => callback(tabId));
   },
 
   onTabsUpdated: (callback) => {

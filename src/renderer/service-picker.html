@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>Add Tab</title>
+  <link rel="stylesheet" href="service-picker.css">
+</head>
+<body>
+  <div class="modal-backdrop" id="backdrop">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="modal-title">Add New Tab</h2>
+        <button class="close-btn" id="close-btn" title="Close">&times;</button>
+      </div>
+
+      <div class="modal-body">
+        <p class="modal-description" id="modal-description">Select a service to open</p>
+
+        <div class="service-grid" id="service-grid">
+          <!-- Services will be injected here -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="service-picker.js"></script>
+</body>
+</html>

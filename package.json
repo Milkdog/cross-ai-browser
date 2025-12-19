@@ -13,6 +13,7 @@
   "devDependencies": {
     "electron": "^33.0.0",
     "electron-builder": "^25.0.0",
+    "electron-rebuild": "^3.2.9",
     "icon-gen": "^5.0.0"
   },
   "build": {
@@ -27,7 +28,6 @@
     }
   },
   "dependencies": {
-    "electron-rebuild": "^3.2.9",
     "electron-store": "^8.2.0",
     "node-pty": "^1.0.0",
     "uuid": "^13.0.0",

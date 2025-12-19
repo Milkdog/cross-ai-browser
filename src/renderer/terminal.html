@@ -10,6 +10,22 @@
 </head>
 <body>
   <div id="terminal-container"></div>
+  <div id="usage-bars">
+    <div class="usage-bar">
+      <div class="usage-label">Session</div>
+      <div class="usage-track">
+        <div class="usage-fill" id="session-fill"></div>
+      </div>
+      <div class="usage-text" id="session-text">--</div>
+    </div>
+    <div class="usage-bar">
+      <div class="usage-label">Weekly</div>
+      <div class="usage-track">
+        <div class="usage-fill" id="weekly-fill"></div>
+      </div>
+      <div class="usage-text" id="weekly-text">--</div>
+    </div>
+  </div>
   <script src="../../node_modules/xterm/lib/xterm.js"></script>
   <script src="../../node_modules/xterm-addon-fit/lib/xterm-addon-fit.js"></script>
   <script src="terminal.js"></script>

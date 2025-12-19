@@ -6,6 +6,8 @@ const terminalId = urlParams.get('id');
 
 // Store listener references for cleanup
 let dataListener = null;
+let exitListener = null;
+let usageListener = null;
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Send terminal input to main process
@@ -33,11 +35,57 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('terminal-data', dataListener);
   },
 
+  // Listen for process exit event
+  onExit: (callback) => {
+    if (exitListener) {
+      ipcRenderer.removeListener('terminal-exit', exitListener);
+    }
+    exitListener = (event, data) => callback(data);
+    ipcRenderer.on('terminal-exit', exitListener);
+  },
+
+  // Request to reload/restart Claude in this terminal (fresh session)
+  reload: () => {
+    ipcRenderer.send('terminal-reload', { terminalId });
+  },
+
+  // Request to resume the previous Claude session (claude --continue)
+  resume: () => {
+    ipcRenderer.send('terminal-resume', { terminalId });
+  },
+
+  // Request to close this terminal tab
+  close: () => {
+    ipcRenderer.send('terminal-close', { terminalId });
+  },
+
+  // Request usage data update
+  requestUsageUpdate: () => {
+    ipcRenderer.send('terminal-request-usage', { terminalId });
+  },
+
+  // Listen for usage updates
+  onUsageUpdate: (callback) => {
+    if (usageListener) {
+      ipcRenderer.removeListener('usage-update', usageListener);
+    }
+    usageListener = (event, data) => callback(data);
+    ipcRenderer.on('usage-update', usageListener);
+  },
+
   // Cleanup listeners when terminal is closed
   cleanup: () => {
     if (dataListener) {
       ipcRenderer.removeListener('terminal-data', dataListener);
       dataListener = null;
+    }
+    if (exitListener) {
+      ipcRenderer.removeListener('terminal-exit', exitListener);
+      exitListener = null;
+    }
+    if (usageListener) {
+      ipcRenderer.removeListener('usage-update', usageListener);
+      usageListener = null;
     }
   }
 });
@@ -46,5 +94,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
 window.addEventListener('beforeunload', () => {
   if (dataListener) {
     ipcRenderer.removeListener('terminal-data', dataListener);
+  }
+  if (exitListener) {
+    ipcRenderer.removeListener('terminal-exit', exitListener);
+  }
+  if (usageListener) {
+    ipcRenderer.removeListener('usage-update', usageListener);
   }
 });

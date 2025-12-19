@@ -2,6 +2,7 @@ const { app, BrowserWindow, BrowserView, ipcMain, globalShortcut, Notification, 
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const { execFile } = require('child_process');
 const Store = require('electron-store');
 const pty = require('node-pty');
 
@@ -55,6 +56,15 @@ let terminalReadyState = {}; // Track which terminals are ready to receive data
 let terminalOutputBuffer = {}; // Buffer PTY output until terminal is ready
 let terminalPromptState = {}; // Track prompt detection state for notifications
 let activeServiceId = null;
+
+// Usage tracking for usage bars
+let usageCache = {
+  data: null,
+  lastFetch: 0,
+  fetchInterval: 30000, // 30 seconds cache TTL
+  pendingFetch: null
+};
+let usageUpdateTimers = {}; // Per-terminal debounce timers
 
 // Pattern that indicates Claude Code is actively working
 const CLAUDE_WORKING_PATTERN = /Esc to interrupt/i;
@@ -168,6 +178,185 @@ function sendTerminalNotification(terminalId, recentOutput) {
   });
 
   notification.show();
+}
+
+// Usage data fetching for usage bars
+// Uses official Anthropic OAuth API endpoint for accurate usage data
+
+// Get OAuth token from macOS Keychain
+function getClaudeOAuthToken() {
+  return new Promise((resolve, reject) => {
+    execFile('security', ['find-generic-password', '-s', 'Claude Code-credentials', '-w'], (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error(`Failed to get credentials from Keychain: ${error.message}`));
+        return;
+      }
+
+      try {
+        // The output is hex-encoded data with additional MCP OAuth data
+        const hexString = stdout.trim();
+        const rawBytes = Buffer.from(hexString, 'hex');
+
+        // Skip first byte (control character)
+        const content = rawBytes.slice(1).toString('utf8');
+
+        // Extract the accessToken directly from claudeAiOauth section
+        // Format: "claudeAiOauth":{"accessToken":"sk-ant-oat01-...",
+        const match = content.match(/"claudeAiOauth"\s*:\s*\{\s*"accessToken"\s*:\s*"([^"]+)"/);
+        if (!match) {
+          reject(new Error('Could not find accessToken in credentials'));
+          return;
+        }
+
+        resolve(match[1]);
+      } catch (e) {
+        reject(new Error(`Failed to parse credentials: ${e.message}`));
+      }
+    });
+  });
+}
+
+// Fetch usage data from official Anthropic API
+async function fetchUsageData() {
+  // Return cached data if recent enough
+  if (usageCache.data && Date.now() - usageCache.lastFetch < usageCache.fetchInterval) {
+    return usageCache.data;
+  }
+
+  // Prevent concurrent fetches
+  if (usageCache.pendingFetch) {
+    return usageCache.pendingFetch;
+  }
+
+  usageCache.pendingFetch = (async () => {
+    try {
+      console.log('=== USAGE: Fetching OAuth token from Keychain...');
+      const accessToken = await getClaudeOAuthToken();
+      console.log('=== USAGE: Got OAuth token, calling API...');
+
+      // Call the official Anthropic usage API
+      const response = await fetch('https://api.anthropic.com/api/oauth/usage', {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'User-Agent': 'cross-ai-browser/1.0',
+          'Authorization': `Bearer ${accessToken}`,
+          'anthropic-beta': 'oauth-2025-04-20'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`API returned ${response.status}: ${response.statusText}`);
+      }
+
+      const apiData = await response.json();
+      console.log('=== USAGE: API response:', JSON.stringify(apiData));
+
+      const result = parseUsageData(apiData);
+      console.log('=== USAGE: parsed result:', JSON.stringify(result));
+      usageCache.data = result;
+      usageCache.lastFetch = Date.now();
+      usageCache.pendingFetch = null;
+      return result;
+    } catch (error) {
+      console.error('=== USAGE: Failed to fetch usage data:', error);
+      usageCache.pendingFetch = null;
+      return null;
+    }
+  })();
+
+  return usageCache.pendingFetch;
+}
+
+function parseUsageData(apiData) {
+  const session = parseSessionData(apiData);
+  const weekly = parseWeeklyData(apiData);
+  return { session, weekly };
+}
+
+function parseSessionData(apiData) {
+  try {
+    // API returns: { five_hour: { utilization: 6.0, resets_at: "2025-..." } }
+    const fiveHour = apiData?.five_hour;
+    if (fiveHour) {
+      const percentUsed = Math.round(fiveHour.utilization || 0);
+      const timeLeft = formatTimeRemaining(fiveHour.resets_at);
+      return { percentUsed, timeLeft };
+    }
+  } catch (e) {
+    console.error('Error parsing session data:', e);
+  }
+  return { percentUsed: 0, timeLeft: '--' };
+}
+
+function parseWeeklyData(apiData) {
+  try {
+    // API returns: { seven_day: { utilization: 35.0, resets_at: "2025-..." } }
+    const sevenDay = apiData?.seven_day;
+    if (sevenDay) {
+      const percentUsed = Math.round(sevenDay.utilization || 0);
+      const timeLeft = formatTimeRemaining(sevenDay.resets_at);
+      return { percentUsed, timeLeft };
+    }
+  } catch (e) {
+    console.error('Error parsing weekly data:', e);
+  }
+  return { percentUsed: 0, timeLeft: '--' };
+}
+
+function formatTimeRemaining(resetTimeStr) {
+  if (!resetTimeStr) return '--';
+
+  try {
+    const resetTime = new Date(resetTimeStr);
+    const now = new Date();
+    const diffMs = resetTime - now;
+
+    if (diffMs <= 0) return 'now';
+
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMins / 60);
+    const diffDays = Math.floor(diffHours / 24);
+
+    if (diffDays > 0) {
+      const remainingHours = diffHours % 24;
+      if (remainingHours > 0) {
+        return `${diffDays}d ${remainingHours}h`;
+      }
+      return `${diffDays}d`;
+    }
+
+    if (diffHours > 0) {
+      const remainingMins = diffMins % 60;
+      return `${diffHours}h ${remainingMins}m`;
+    }
+
+    return `${diffMins}m`;
+  } catch (e) {
+    console.error('Error formatting time remaining:', e);
+    return '--';
+  }
+}
+
+// Trigger usage update for a terminal (debounced)
+function triggerUsageUpdate(terminalId) {
+  if (usageUpdateTimers[terminalId]) {
+    clearTimeout(usageUpdateTimers[terminalId]);
+  }
+
+  usageUpdateTimers[terminalId] = setTimeout(async () => {
+    console.log('=== USAGE: triggerUsageUpdate firing for', terminalId);
+    const view = terminalViews[terminalId];
+    if (view && !view.webContents.isDestroyed()) {
+      const usageData = await fetchUsageData();
+      console.log('=== USAGE: got usageData:', usageData);
+      if (usageData) {
+        console.log('=== USAGE: sending usage-update to renderer');
+        view.webContents.send('usage-update', usageData);
+      }
+    }
+  }, 2000); // 2 second debounce
 }
 
 function createWindow() {
@@ -318,7 +507,7 @@ function createTerminalTab(terminalId, name, cwd, switchTo = true) {
   return terminalId;
 }
 
-function setupTerminalPty(terminalId, cwd, cols = 80, rows = 30) {
+function setupTerminalPty(terminalId, cwd, cols = 80, rows = 30, resume = false) {
   const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/bash';
 
   // Initialize output buffer for this terminal
@@ -333,8 +522,11 @@ function setupTerminalPty(terminalId, cwd, cols = 80, rows = 30) {
     lastMessage: ''     // Store the last Claude message for notification
   };
 
+  // Build claude command - use --continue flag if resuming
+  const claudeCmd = resume ? 'claude --continue' : 'claude';
+
   try {
-    const ptyProcess = pty.spawn(shell, ['-c', 'claude'], {
+    const ptyProcess = pty.spawn(shell, ['-c', claudeCmd], {
       name: 'xterm-256color',
       cols: cols,
       rows: rows,
@@ -388,6 +580,9 @@ function setupTerminalPty(terminalId, cwd, cols = 80, rows = 30) {
 
         // Check for prompt patterns (with debounce)
         checkForPromptAndNotify(terminalId);
+
+        // Trigger usage bar update (debounced)
+        triggerUsageUpdate(terminalId);
       }
     });
 
@@ -395,19 +590,24 @@ function setupTerminalPty(terminalId, cwd, cols = 80, rows = 30) {
     ptyProcess.onExit(({ exitCode, signal }) => {
       console.log(`Terminal ${terminalId} process exited with code ${exitCode}, signal ${signal}`);
 
-      // If process exited immediately (command not found), notify user
       const view = terminalViews[terminalId];
-      if (view && !view.webContents.isDestroyed() && exitCode !== 0) {
-        const errorMsg = exitCode === 127
-          ? '\r\n\x1b[31mError: "claude" command not found. Please install Claude Code CLI first.\x1b[0m\r\n'
-          : `\r\n\x1b[31mProcess exited with code ${exitCode}\x1b[0m\r\n`;
-
-        if (terminalReadyState[terminalId]) {
-          view.webContents.send('terminal-data', errorMsg);
-        } else {
-          terminalOutputBuffer[terminalId].push(errorMsg);
+      if (view && !view.webContents.isDestroyed()) {
+        // For command not found, show error message
+        if (exitCode === 127) {
+          const errorMsg = '\r\n\x1b[31mError: "claude" command not found. Please install Claude Code CLI first.\x1b[0m\r\n';
+          if (terminalReadyState[terminalId]) {
+            view.webContents.send('terminal-data', errorMsg);
+          } else {
+            terminalOutputBuffer[terminalId].push(errorMsg);
+          }
         }
+
+        // Send exit event to renderer so it can show reload/close options
+        view.webContents.send('terminal-exit', { exitCode, signal });
       }
+
+      // Clean up PTY reference
+      delete terminalPtys[terminalId];
     });
 
     return ptyProcess;
@@ -430,8 +630,8 @@ function setupTerminalPty(terminalId, cwd, cols = 80, rows = 30) {
 }
 
 // Alias for spawning PTY with specific size
-function setupTerminalPtyWithSize(terminalId, cwd, cols, rows) {
-  return setupTerminalPty(terminalId, cwd, cols, rows);
+function setupTerminalPtyWithSize(terminalId, cwd, cols, rows, resume = false) {
+  return setupTerminalPty(terminalId, cwd, cols, rows, resume);
 }
 
 function closeTerminalTab(terminalId) {
@@ -462,6 +662,10 @@ function closeTerminalTab(terminalId) {
   if (promptCheckTimers[terminalId]) {
     clearTimeout(promptCheckTimers[terminalId]);
     delete promptCheckTimers[terminalId];
+  }
+  if (usageUpdateTimers[terminalId]) {
+    clearTimeout(usageUpdateTimers[terminalId]);
+    delete usageUpdateTimers[terminalId];
   }
 
   // Remove from terminal tabs list
@@ -751,6 +955,12 @@ ipcMain.on('terminal-input', (event, { terminalId, data }) => {
 });
 
 ipcMain.on('terminal-resize', (event, { terminalId, cols, rows }) => {
+  // Store dimensions for potential reload
+  if (terminalPromptState[terminalId]) {
+    terminalPromptState[terminalId].cols = cols;
+    terminalPromptState[terminalId].rows = rows;
+  }
+
   const ptyProcess = terminalPtys[terminalId];
   if (ptyProcess) {
     try {
@@ -764,6 +974,73 @@ ipcMain.on('terminal-resize', (event, { terminalId, cols, rows }) => {
     if (terminal && terminalReadyState[terminalId]) {
       setupTerminalPtyWithSize(terminalId, terminal.cwd, cols, rows);
     }
+  }
+});
+
+// Handle terminal reload request (restart Claude in the same terminal)
+ipcMain.on('terminal-reload', (event, { terminalId }) => {
+  const terminal = terminalTabs.find(t => t.id === terminalId);
+  const view = terminalViews[terminalId];
+
+  if (!terminal || !view || view.webContents.isDestroyed()) return;
+
+  // Kill existing PTY if still running
+  const existingPty = terminalPtys[terminalId];
+  if (existingPty) {
+    existingPty.kill();
+    delete terminalPtys[terminalId];
+  }
+
+  // Clear terminal and show restart message
+  view.webContents.send('terminal-data', '\x1b[2J\x1b[H'); // Clear screen
+  view.webContents.send('terminal-data', '\x1b[90mRestarting Claude Code...\x1b[0m\r\n\r\n');
+
+  // Get current terminal dimensions from the view
+  const { cols, rows } = terminalPromptState[terminalId] || { cols: 80, rows: 30 };
+
+  // Spawn new PTY
+  setupTerminalPty(terminalId, terminal.cwd, cols, rows);
+});
+
+// Handle terminal resume request (restart Claude with --continue to resume session)
+ipcMain.on('terminal-resume', (event, { terminalId }) => {
+  const terminal = terminalTabs.find(t => t.id === terminalId);
+  const view = terminalViews[terminalId];
+
+  if (!terminal || !view || view.webContents.isDestroyed()) return;
+
+  // Kill existing PTY if still running
+  const existingPty = terminalPtys[terminalId];
+  if (existingPty) {
+    existingPty.kill();
+    delete terminalPtys[terminalId];
+  }
+
+  // Clear terminal and show resume message
+  view.webContents.send('terminal-data', '\x1b[2J\x1b[H'); // Clear screen
+  view.webContents.send('terminal-data', '\x1b[90mResuming Claude Code session...\x1b[0m\r\n\r\n');
+
+  // Get current terminal dimensions
+  const promptState = terminalPromptState[terminalId] || {};
+  const { cols = 80, rows = 30 } = promptState;
+
+  // Spawn new PTY with --continue flag
+  setupTerminalPty(terminalId, terminal.cwd, cols, rows, true);
+});
+
+// Handle terminal close request
+ipcMain.on('terminal-close', (event, { terminalId }) => {
+  closeTerminalTab(terminalId);
+});
+
+// Handle usage data request from terminal renderer
+ipcMain.on('terminal-request-usage', async (event, { terminalId }) => {
+  const view = terminalViews[terminalId];
+  if (!view || view.webContents.isDestroyed()) return;
+
+  const usageData = await fetchUsageData();
+  if (usageData) {
+    view.webContents.send('usage-update', usageData);
   }
 });
 

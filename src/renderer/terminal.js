@@ -118,3 +118,199 @@ terminal.attachCustomKeyEventHandler((e) => {
 
 // Focus terminal on load
 terminal.focus();
+
+// Handle process exit - show reload/close options
+window.electronAPI.onExit(({ exitCode, signal }) => {
+  console.log('Claude process exited:', exitCode, signal);
+
+  // Create exit overlay using safe DOM methods
+  const overlay = document.createElement('div');
+  overlay.id = 'exit-overlay';
+
+  const message = document.createElement('div');
+  message.className = 'exit-message';
+
+  const icon = document.createElement('div');
+  icon.className = 'exit-icon';
+  icon.textContent = '⏹';
+
+  const title = document.createElement('div');
+  title.className = 'exit-title';
+  title.textContent = 'Claude Code has exited';
+
+  const buttons = document.createElement('div');
+  buttons.className = 'exit-buttons';
+
+  // Resume button (primary) - uses claude --continue
+  const resumeBtn = document.createElement('button');
+  resumeBtn.className = 'exit-btn resume-btn';
+  const resumeIcon = document.createElement('span');
+  resumeIcon.className = 'btn-icon';
+  resumeIcon.textContent = '▶';
+  resumeBtn.appendChild(resumeIcon);
+  resumeBtn.appendChild(document.createTextNode(' Resume'));
+
+  // New Session button - starts fresh
+  const newBtn = document.createElement('button');
+  newBtn.className = 'exit-btn new-btn';
+  const newIcon = document.createElement('span');
+  newIcon.className = 'btn-icon';
+  newIcon.textContent = '+';
+  newBtn.appendChild(newIcon);
+  newBtn.appendChild(document.createTextNode(' New Session'));
+
+  // Close Tab button
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'exit-btn close-btn';
+  const closeIcon = document.createElement('span');
+  closeIcon.className = 'btn-icon';
+  closeIcon.textContent = '✕';
+  closeBtn.appendChild(closeIcon);
+  closeBtn.appendChild(document.createTextNode(' Close Tab'));
+
+  buttons.appendChild(resumeBtn);
+  buttons.appendChild(newBtn);
+  buttons.appendChild(closeBtn);
+  message.appendChild(icon);
+  message.appendChild(title);
+  message.appendChild(buttons);
+  overlay.appendChild(message);
+
+  // Style the overlay
+  overlay.style.cssText = `
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(30, 30, 30, 0.95);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  `;
+
+  const style = document.createElement('style');
+  style.textContent = `
+    .exit-message {
+      text-align: center;
+      color: #d4d4d4;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    .exit-icon {
+      font-size: 48px;
+      margin-bottom: 16px;
+      opacity: 0.7;
+    }
+    .exit-title {
+      font-size: 18px;
+      font-weight: 500;
+      margin-bottom: 24px;
+    }
+    .exit-buttons {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+    }
+    .exit-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 20px;
+      border: none;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .exit-btn:hover {
+      transform: translateY(-1px);
+    }
+    .btn-icon {
+      font-size: 16px;
+    }
+    .resume-btn {
+      background: #d97757;
+      color: white;
+    }
+    .resume-btn:hover {
+      background: #e88868;
+    }
+    .new-btn {
+      background: #3c3c3c;
+      color: #d4d4d4;
+    }
+    .new-btn:hover {
+      background: #4c4c4c;
+    }
+    .close-btn {
+      background: #3c3c3c;
+      color: #d4d4d4;
+    }
+    .close-btn:hover {
+      background: #4c4c4c;
+    }
+  `;
+  document.head.appendChild(style);
+  document.body.appendChild(overlay);
+
+  // Handle button clicks
+  resumeBtn.addEventListener('click', () => {
+    overlay.remove();
+    terminal.clear();
+    window.electronAPI.resume(); // Uses claude --continue
+  });
+
+  newBtn.addEventListener('click', () => {
+    overlay.remove();
+    terminal.clear();
+    window.electronAPI.reload(); // Starts fresh claude session
+  });
+
+  closeBtn.addEventListener('click', () => {
+    window.electronAPI.close();
+  });
+});
+
+// Usage bar update functionality
+function updateUsageBar(type, data) {
+  console.log('=== RENDERER: updateUsageBar called:', type, data);
+  if (!data) return;
+
+  const fillEl = document.getElementById(`${type}-fill`);
+  const textEl = document.getElementById(`${type}-text`);
+
+  console.log('=== RENDERER: DOM elements:', { fillEl: !!fillEl, textEl: !!textEl });
+  if (!fillEl || !textEl) return;
+
+  // Update progress bar width
+  const percentage = data.percentUsed || 0;
+  fillEl.style.width = `${Math.min(percentage, 100)}%`;
+
+  // Apply warning colors based on percentage
+  fillEl.classList.remove('warning', 'critical');
+  if (percentage >= 95) {
+    fillEl.classList.add('critical');
+  } else if (percentage >= 90) {
+    fillEl.classList.add('warning');
+  }
+
+  // Update text display
+  const percentText = percentage > 0 ? `${Math.round(percentage)}%` : '--';
+  const timeText = data.timeLeft || '--';
+  textEl.textContent = `${percentText} \u2022 ${timeText}`;
+}
+
+// Listen for usage updates from main process
+window.electronAPI.onUsageUpdate((data) => {
+  console.log('=== RENDERER: Received usage update:', data);
+  const { session, weekly } = data;
+  updateUsageBar('session', session);
+  updateUsageBar('weekly', weekly);
+});
+
+// Request initial usage data once terminal is ready
+setTimeout(() => {
+  window.electronAPI.requestUsageUpdate();
+}, 1000);

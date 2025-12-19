@@ -9,7 +9,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Tab management (includes terminals)
   getAllTabs: () => ipcRenderer.invoke('get-all-tabs'),
   addTerminal: () => ipcRenderer.invoke('add-terminal'),
-  resumeTerminalSession: () => ipcRenderer.invoke('resume-terminal-session'),
   closeTerminal: (terminalId) => ipcRenderer.send('close-terminal', terminalId),
 
   // Navigation controls

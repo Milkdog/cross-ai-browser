@@ -396,7 +396,8 @@ function createWindow() {
   }
 
   validTerminals.forEach(terminal => {
-    createTerminalTab(terminal.id, terminal.name, terminal.cwd, false);
+    // Restored tabs use 'resume' mode to pick up previous session
+    createTerminalTab(terminal.id, terminal.name, terminal.cwd, false, 'resume');
   });
 
   // Set default active service
@@ -916,28 +917,6 @@ ipcMain.handle('add-terminal', async () => {
   return { success: false };
 });
 
-// Create a new terminal with interactive session picker (--resume)
-ipcMain.handle('resume-terminal-session', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openDirectory'],
-    title: 'Select folder for Claude Code (Resume Session)'
-  });
-
-  if (!result.canceled && result.filePaths.length > 0) {
-    const folderPath = result.filePaths[0];
-    const folderName = path.basename(folderPath);
-    const terminalId = `terminal-${crypto.randomUUID()}`;
-
-    // Create terminal with 'resume' mode for interactive session picker
-    createTerminalTab(terminalId, `${folderName} (Resume)`, folderPath, true, 'resume');
-    updateShortcuts();
-
-    return { success: true, terminalId };
-  }
-
-  return { success: false };
-});
-
 ipcMain.on('close-terminal', async (event, terminalId) => {
   // Show confirmation dialog before closing
   const terminal = terminalTabs.find(t => t.id === terminalId);
@@ -1074,8 +1053,8 @@ ipcMain.on('terminal-resume', (event, { terminalId }) => {
   const promptState = terminalPromptState[terminalId] || {};
   const { cols = 80, rows = 30 } = promptState;
 
-  // Spawn new PTY with --continue flag
-  setupTerminalPty(terminalId, terminal.cwd, cols, rows, 'continue');
+  // Spawn new PTY with --resume flag for interactive session picker
+  setupTerminalPty(terminalId, terminal.cwd, cols, rows, 'resume');
 });
 
 // Handle terminal close request

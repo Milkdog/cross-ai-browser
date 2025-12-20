@@ -23,6 +23,57 @@
       </div>
     </div>
 
+    <!-- Downloads Panel (always visible) -->
+    <div class="downloads-panel visible" id="downloads-panel">
+      <div class="downloads-header">
+        <span class="downloads-title">Downloads</span>
+      </div>
+
+      <!-- Active Downloads -->
+      <div class="downloads-section" id="active-downloads-section">
+        <div class="downloads-section-title">Active</div>
+        <div class="active-downloads-list" id="active-downloads-list">
+          <!-- Active downloads rendered here -->
+        </div>
+      </div>
+
+      <!-- Image Thumbnails Gallery -->
+      <div class="downloads-section" id="thumbnails-section">
+        <div class="downloads-section-title">Images</div>
+        <div class="thumbnails-gallery" id="thumbnails-gallery">
+          <!-- Thumbnails rendered here -->
+        </div>
+      </div>
+
+      <!-- File List -->
+      <div class="downloads-section" id="files-section">
+        <div class="downloads-section-title">Files</div>
+        <div class="files-list" id="files-list">
+          <!-- Files rendered here -->
+        </div>
+      </div>
+    </div>
+
+    <!-- History Panel -->
+    <div class="history-panel" id="history-panel">
+      <div class="history-header" id="history-header">
+        <span class="history-title">History</span>
+        <span class="history-toggle">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        </span>
+      </div>
+      <div class="history-content" id="history-content">
+        <div class="history-list" id="history-list">
+          <!-- History sessions rendered here -->
+        </div>
+        <div class="history-empty" id="history-empty">
+          No session history yet
+        </div>
+      </div>
+    </div>
+
     <!-- Footer controls -->
     <div class="sidebar-footer">
       <button class="control-btn" id="reload-btn" title="Reload (Cmd+R)">

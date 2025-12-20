@@ -17,6 +17,13 @@ An Electron app that provides a unified tabbed interface for AI chat services (C
 - `ServiceRegistry.js` - Defines available service types (ChatGPT, Claude, Gemini, Claude Code)
 - `TabManager.js` - Manages tab state, persistence, ordering, and naming
 - `ViewManager.js` - Handles BrowserView lifecycle and switching
+- `DownloadManager.js` - Manages file downloads with thumbnails and history
+- `HistoryManager.js` - Coordinates terminal session history capture and retention
+
+### History Modules (`src/core/history/`)
+- `StorageEngine.js` - File I/O abstraction, atomic writes, path hashing by cwd
+- `SessionRecorder.js` - In-memory buffer for PTY output, gzip compression
+- `RetentionPolicy.js` - Time-based (30 days) and size-based (500MB) cleanup logic
 
 ### Renderer Process (`src/renderer/`)
 - `sidebar.html/js` - Tab list with drag-drop reordering
@@ -27,11 +34,12 @@ An Electron app that provides a unified tabbed interface for AI chat services (C
 - `styles.css` - Sidebar styling
 
 ### Preload Scripts
-- `sidebar-preload.js` - Exposes IPC APIs to sidebar
+- `sidebar-preload.js` - Exposes IPC APIs to sidebar (tabs, downloads, history)
 - `webview-preload.js` - Detects AI streaming state, sends notifications
 - `terminal-preload.js` - Terminal IPC for pty communication
 - `service-picker-preload.js` - Service picker IPC
 - `rename-dialog-preload.js` - Rename dialog IPC
+- `settings-preload.js` - Settings panel IPC
 
 ## Key Technical Decisions
 - **Shared session partition** - All web services share `persist:shared` for unified login (Google OAuth works across services)
@@ -47,6 +55,32 @@ Each AI service has specific selectors for detecting streaming state:
 - **ChatGPT**: Looks for stop button, streaming dots, result-streaming class
 - **Claude**: Looks for stop button with specific SVG path
 - **Gemini**: Looks for stop button, loading indicators
+
+## Terminal Session History
+Claude Code terminal sessions are automatically captured and persisted for later review.
+
+### How It Works
+1. **Capture**: PTY output is buffered in memory (max 100MB per session)
+2. **Compression**: On session end, output is gzip compressed (level 6)
+3. **Storage**: Saved to `~/Library/Application Support/Cross AI Browser/history/`
+4. **Organization**: Sessions grouped by working directory hash
+5. **Retention**: Automatic cleanup of sessions older than 30 days or when total exceeds 500MB
+
+### UI
+- **History panel** in sidebar (collapsible, below Downloads)
+- Sessions grouped by date (Today, Yesterday, etc.)
+- Actions: View (modal), Export (plain text), Delete
+
+### Storage Format
+```
+history/
+├── <cwd-hash-1>/
+│   ├── 1703001234567.gz    # Compressed session (timestamp.gz)
+│   └── 1703002345678.gz
+└── <cwd-hash-2>/
+    └── 1703003456789.gz
+```
+Session metadata stored in electron-store under `history.sessions`.
 
 ## Commands
 - `npm start` - Run in development
@@ -70,12 +104,19 @@ src/
 ├── terminal-preload.js        # Preload for terminal
 ├── service-picker-preload.js  # Preload for service picker
 ├── rename-dialog-preload.js   # Preload for rename dialog
+├── settings-preload.js        # Preload for settings panel
 ├── core/
 │   ├── ServiceRegistry.js     # Service type definitions
 │   ├── TabManager.js          # Tab state management
-│   └── ViewManager.js         # BrowserView management
+│   ├── ViewManager.js         # BrowserView management
+│   ├── DownloadManager.js     # Download management
+│   ├── HistoryManager.js      # Terminal session history coordinator
+│   └── history/
+│       ├── StorageEngine.js   # File I/O for history
+│       ├── SessionRecorder.js # PTY output buffering
+│       └── RetentionPolicy.js # Cleanup logic
 └── renderer/
-    ├── sidebar.html/js        # Sidebar with tab list
+    ├── sidebar.html/js        # Sidebar with tab list, downloads, history
     ├── service-picker.*       # Add tab modal
     ├── rename-dialog.*        # Rename tab modal
     ├── terminal.*             # Claude Code terminal

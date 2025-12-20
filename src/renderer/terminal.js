@@ -101,6 +101,7 @@ terminal.attachCustomKeyEventHandler((e) => {
 
   // Cmd+V = paste
   if ((e.metaKey || e.ctrlKey) && e.key === 'v') {
+    e.preventDefault(); // Prevent browser's native paste
     navigator.clipboard.readText().then(text => {
       window.electronAPI.sendInput(text);
     });

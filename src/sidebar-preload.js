@@ -28,6 +28,32 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSettings: () => ipcRenderer.invoke('get-settings'),
   setSetting: (key, value) => ipcRenderer.send('set-setting', key, value),
   openSettings: () => ipcRenderer.send('open-settings'),
+  closeSettings: () => ipcRenderer.send('close-settings'),
+
+  // Downloads
+  getDownloads: () => ipcRenderer.invoke('get-downloads'),
+  pauseDownload: (downloadId) => ipcRenderer.invoke('pause-download', downloadId),
+  resumeDownload: (downloadId) => ipcRenderer.invoke('resume-download', downloadId),
+  cancelDownload: (downloadId) => ipcRenderer.invoke('cancel-download', downloadId),
+  removeDownload: (downloadId) => ipcRenderer.invoke('remove-download', downloadId),
+  clearDownloadHistory: () => ipcRenderer.invoke('clear-download-history'),
+  openDownload: (downloadId) => ipcRenderer.invoke('open-download', downloadId),
+  showDownloadInFolder: (downloadId) => ipcRenderer.invoke('show-download-in-folder', downloadId),
+  getDownloadSaveMode: () => ipcRenderer.invoke('get-download-save-mode'),
+  setDownloadSaveMode: (mode) => ipcRenderer.invoke('set-download-save-mode', mode),
+
+  // History
+  getHistorySessions: (options) => ipcRenderer.invoke('get-history-sessions', options),
+  getHistorySessionsForCwd: (cwd, limit) => ipcRenderer.invoke('get-history-sessions-for-cwd', cwd, limit),
+  getHistorySession: (sessionId) => ipcRenderer.invoke('get-history-session', sessionId),
+  readHistorySession: (sessionId) => ipcRenderer.invoke('read-history-session', sessionId),
+  deleteHistorySession: (sessionId) => ipcRenderer.invoke('delete-history-session', sessionId),
+  exportHistorySession: (sessionId) => ipcRenderer.invoke('export-history-session', sessionId),
+  getHistorySettings: () => ipcRenderer.invoke('get-history-settings'),
+  updateHistorySettings: (settings) => ipcRenderer.invoke('update-history-settings', settings),
+  getHistoryStats: () => ipcRenderer.invoke('get-history-stats'),
+  clearHistory: () => ipcRenderer.invoke('clear-history'),
+  isHistoryEnabled: () => ipcRenderer.invoke('is-history-enabled'),
 
   // Event listeners
   onActiveServiceChanged: (callback) => {
@@ -36,5 +62,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   onTabsUpdated: (callback) => {
     ipcRenderer.on('tabs-updated', (event, tabs) => callback(tabs));
+  },
+
+  onDownloadsUpdated: (callback) => {
+    ipcRenderer.on('downloads-updated', (event, data) => callback(data));
+  },
+
+  onHistoryUpdated: (callback) => {
+    ipcRenderer.on('history-updated', (event, data) => callback(data));
   }
 });

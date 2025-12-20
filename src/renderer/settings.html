@@ -2,6 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
   <title>Settings</title>
   <style>
     * {
@@ -12,20 +13,72 @@
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: rgba(0, 0, 0, 0.6);
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .settings-modal {
       background: #1e1e2e;
-      color: white;
-      padding: 16px;
       border-radius: 12px;
-      overflow: hidden;
+      padding: 20px;
+      width: 320px;
+      max-width: 90%;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.1);
     }
 
     .settings-header {
-      color: rgba(255, 255, 255, 0.9);
-      font-size: 13px;
-      font-weight: 600;
-      margin-bottom: 12px;
-      padding-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
       border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .settings-title {
+      color: rgba(255, 255, 255, 0.9);
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    .close-btn {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      border: none;
+      background: rgba(255, 255, 255, 0.06);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: rgba(255, 255, 255, 0.5);
+      transition: all 0.2s ease;
+    }
+
+    .close-btn:hover {
+      background: rgba(255, 255, 255, 0.12);
+      color: rgba(255, 255, 255, 0.8);
+    }
+
+    .settings-section {
+      margin-bottom: 20px;
+    }
+
+    .settings-section:last-child {
+      margin-bottom: 0;
+    }
+
+    .section-title {
+      color: rgba(255, 255, 255, 0.4);
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
     }
 
     .settings-group {
@@ -114,39 +167,105 @@
       background: #1e1e2e;
       color: white;
     }
+
+    /* Action button */
+    .action-btn {
+      width: 100%;
+      padding: 10px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 6px;
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .action-btn:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.2);
+      color: rgba(255, 255, 255, 0.9);
+    }
+
+    .action-btn.danger:hover {
+      background: rgba(239, 68, 68, 0.1);
+      border-color: rgba(239, 68, 68, 0.3);
+      color: #ef4444;
+    }
   </style>
 </head>
 <body>
-  <div class="settings-header">Notification Settings</div>
+  <div class="settings-modal">
+    <div class="settings-header">
+      <span class="settings-title">Settings</span>
+      <button class="close-btn" id="close-btn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"/>
+          <line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>
 
-  <div class="settings-group">
-    <label class="settings-toggle">
-      <input type="checkbox" id="notifications-enabled" checked>
-      <span class="toggle-slider"></span>
-      <span class="toggle-label">Enable notifications</span>
-    </label>
-  </div>
+    <div class="settings-section">
+      <div class="section-title">Notifications</div>
+      <div class="settings-group">
+        <label class="settings-toggle">
+          <input type="checkbox" id="notifications-enabled" checked>
+          <span class="toggle-slider"></span>
+          <span class="toggle-label">Enable notifications</span>
+        </label>
+      </div>
 
-  <div class="settings-group">
-    <label class="settings-label">Notify when</label>
-    <select id="notification-mode">
-      <option value="always">Always</option>
-      <option value="unfocused">Window unfocused</option>
-      <option value="inactive-tab">Inactive tab only</option>
-    </select>
+      <div class="settings-group">
+        <label class="settings-label">Notify when</label>
+        <select id="notification-mode">
+          <option value="always">Always</option>
+          <option value="unfocused">Window unfocused</option>
+          <option value="inactive-tab">Inactive tab only</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="section-title">Downloads</div>
+      <div class="settings-group">
+        <label class="settings-label">Save location</label>
+        <select id="download-save-mode">
+          <option value="ask">Always ask</option>
+          <option value="auto">Auto-save to Downloads</option>
+        </select>
+      </div>
+
+      <div class="settings-group">
+        <button class="action-btn danger" id="clear-history-btn">Clear Download History</button>
+      </div>
+    </div>
   </div>
 
   <script>
     const notificationsEnabled = document.getElementById('notifications-enabled');
     const notificationMode = document.getElementById('notification-mode');
+    const downloadSaveMode = document.getElementById('download-save-mode');
+    const clearHistoryBtn = document.getElementById('clear-history-btn');
+    const closeBtn = document.getElementById('close-btn');
 
     // Load current settings
-    window.electronAPI.getSettings().then(settings => {
-      if (settings && settings.notifications) {
-        notificationsEnabled.checked = settings.notifications.enabled;
-        notificationMode.value = settings.notifications.mode;
+    async function loadSettings() {
+      try {
+        const settings = await window.electronAPI.getSettings();
+        if (settings && settings.notifications) {
+          notificationsEnabled.checked = settings.notifications.enabled;
+          notificationMode.value = settings.notifications.mode;
+        }
+
+        const saveMode = await window.electronAPI.getDownloadSaveMode();
+        downloadSaveMode.value = saveMode;
+      } catch (e) {
+        console.error('Failed to load settings:', e);
       }
-    }).catch(() => {});
+    }
+
+    loadSettings();
 
     // Save settings on change
     notificationsEnabled.onchange = () => {
@@ -156,6 +275,37 @@
     notificationMode.onchange = () => {
       window.electronAPI.setSetting('notifications.mode', notificationMode.value);
     };
+
+    downloadSaveMode.onchange = async () => {
+      await window.electronAPI.setDownloadSaveMode(downloadSaveMode.value);
+    };
+
+    clearHistoryBtn.onclick = async () => {
+      await window.electronAPI.clearDownloadHistory();
+      clearHistoryBtn.textContent = 'Cleared!';
+      setTimeout(() => {
+        clearHistoryBtn.textContent = 'Clear Download History';
+      }, 1500);
+    };
+
+    closeBtn.onclick = () => {
+      window.electronAPI.closeSettings();
+    };
+
+    // Close on backdrop click (click outside the modal)
+    document.addEventListener('click', (e) => {
+      const modal = document.querySelector('.settings-modal');
+      if (modal && !modal.contains(e.target)) {
+        window.electronAPI.closeSettings();
+      }
+    });
+
+    // Close on Escape
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        window.electronAPI.closeSettings();
+      }
+    });
   </script>
 </body>
 </html>

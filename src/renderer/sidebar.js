@@ -1,5 +1,11 @@
 console.log('sidebar.js loaded');
 
+// State
+let activeDownloads = [];
+let downloadHistory = [];
+let historySessions = [];
+let historyExpanded = false;
+
 // Service icons (duplicated from ServiceRegistry for renderer)
 const SERVICE_ICONS = {
   chatgpt: `<svg viewBox="0 0 24 24" fill="currentColor">
@@ -35,6 +41,12 @@ async function init() {
   activeTabId = await window.electronAPI.getActiveService();
   updateActiveState(activeTabId);
 
+  // Load initial downloads
+  const initialDownloads = await window.electronAPI.getDownloads();
+  activeDownloads = initialDownloads.active || [];
+  downloadHistory = initialDownloads.history || [];
+  renderDownloads();
+
   // Listen for active service changes
   window.electronAPI.onActiveServiceChanged((tabId) => {
     activeTabId = tabId;
@@ -46,6 +58,32 @@ async function init() {
     allTabs = tabs;
     renderTabs(tabs);
     updateActiveState(activeTabId);
+  });
+
+  // Listen for download updates
+  window.electronAPI.onDownloadsUpdated((data) => {
+    activeDownloads = data.active || [];
+    downloadHistory = data.history || [];
+    renderDownloads();
+  });
+
+  // Load initial history sessions
+  historySessions = await window.electronAPI.getHistorySessions({ limit: 20 });
+  renderHistory();
+
+  // Listen for history updates
+  window.electronAPI.onHistoryUpdated((data) => {
+    historySessions = data.sessions || [];
+    renderHistory();
+  });
+
+  // History panel toggle
+  document.getElementById('history-header').addEventListener('click', () => {
+    historyExpanded = !historyExpanded;
+    const panel = document.getElementById('history-panel');
+    const content = document.getElementById('history-content');
+    panel.classList.toggle('expanded', historyExpanded);
+    content.style.display = historyExpanded ? 'block' : 'none';
   });
 
   // Reload button
@@ -64,7 +102,6 @@ async function init() {
   document.getElementById('add-tab-btn').addEventListener('click', () => {
     window.electronAPI.showServicePicker();
   });
-
 }
 
 function renderTabs(tabs) {
@@ -188,5 +225,520 @@ document.addEventListener('keydown', (e) => {
     }
   }
 });
+
+// ==================== Download Functions ====================
+
+function renderDownloads() {
+  renderActiveDownloads();
+  renderThumbnails();
+  renderFilesList();
+}
+
+function renderActiveDownloads() {
+  const container = document.getElementById('active-downloads-list');
+  const section = document.getElementById('active-downloads-section');
+
+  container.textContent = '';
+
+  if (activeDownloads.length === 0) {
+    section.classList.add('hidden');
+    return;
+  }
+
+  section.classList.remove('hidden');
+
+  activeDownloads.forEach(download => {
+    const item = document.createElement('div');
+    item.className = 'active-download-item';
+
+    const info = document.createElement('div');
+    info.className = 'download-info';
+
+    const filename = document.createElement('div');
+    filename.className = 'download-filename';
+    filename.textContent = truncateFilename(download.filename, 25);
+    filename.title = download.filename;
+    info.appendChild(filename);
+
+    const progress = document.createElement('div');
+    progress.className = 'download-progress';
+
+    const progressBar = document.createElement('div');
+    progressBar.className = 'download-progress-bar';
+    progressBar.style.width = `${download.percent}%`;
+    progress.appendChild(progressBar);
+    info.appendChild(progress);
+
+    const stats = document.createElement('div');
+    stats.className = 'download-stats';
+    stats.textContent = `${download.percent}% • ${formatBytes(download.speed)}/s`;
+    info.appendChild(stats);
+
+    item.appendChild(info);
+
+    const actions = document.createElement('div');
+    actions.className = 'download-actions';
+
+    if (download.isPaused) {
+      const resumeBtn = createActionButton('resume', 'Resume', () => {
+        window.electronAPI.resumeDownload(download.id);
+      });
+      actions.appendChild(resumeBtn);
+    } else {
+      const pauseBtn = createActionButton('pause', 'Pause', () => {
+        window.electronAPI.pauseDownload(download.id);
+      });
+      actions.appendChild(pauseBtn);
+    }
+
+    const cancelBtn = createActionButton('cancel', 'Cancel', () => {
+      window.electronAPI.cancelDownload(download.id);
+    });
+    actions.appendChild(cancelBtn);
+
+    item.appendChild(actions);
+    container.appendChild(item);
+  });
+}
+
+function renderThumbnails() {
+  const container = document.getElementById('thumbnails-gallery');
+  const section = document.getElementById('thumbnails-section');
+
+  container.textContent = '';
+
+  // Filter completed image downloads with thumbnails
+  const images = downloadHistory.filter(d =>
+    d.state === 'completed' && d.thumbnailPath
+  ).slice(0, 10);
+
+  if (images.length === 0) {
+    section.classList.add('hidden');
+    return;
+  }
+
+  section.classList.remove('hidden');
+
+  images.forEach(download => {
+    const thumb = document.createElement('div');
+    thumb.className = 'thumbnail-item';
+    thumb.title = download.filename;
+
+    const img = document.createElement('img');
+    img.src = `file://${download.thumbnailPath}`;
+    img.alt = download.filename;
+    img.addEventListener('error', () => {
+      thumb.remove();
+    });
+    thumb.appendChild(img);
+
+    thumb.addEventListener('click', () => {
+      window.electronAPI.openDownload(download.id);
+    });
+
+    thumb.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      showDownloadContextMenu(download);
+    });
+
+    container.appendChild(thumb);
+  });
+}
+
+function renderFilesList() {
+  const container = document.getElementById('files-list');
+  const section = document.getElementById('files-section');
+
+  container.textContent = '';
+
+  // Filter completed non-image downloads
+  const files = downloadHistory.filter(d =>
+    d.state === 'completed' && !d.thumbnailPath
+  ).slice(0, 10);
+
+  if (files.length === 0) {
+    section.classList.add('hidden');
+    return;
+  }
+
+  section.classList.remove('hidden');
+
+  files.forEach(download => {
+    const item = document.createElement('div');
+    item.className = 'file-item';
+
+    const icon = document.createElement('div');
+    icon.className = 'file-icon';
+    icon.innerHTML = getFileIcon(download.filename);
+    item.appendChild(icon);
+
+    const info = document.createElement('div');
+    info.className = 'file-info';
+
+    const filename = document.createElement('div');
+    filename.className = 'file-filename';
+    filename.textContent = truncateFilename(download.filename, 20);
+    filename.title = download.filename;
+    info.appendChild(filename);
+
+    const size = document.createElement('div');
+    size.className = 'file-size';
+    size.textContent = formatBytes(download.fileSize || 0);
+    info.appendChild(size);
+
+    item.appendChild(info);
+
+    const actions = document.createElement('div');
+    actions.className = 'file-actions';
+
+    const openBtn = createActionButton('open', 'Open', () => {
+      window.electronAPI.openDownload(download.id);
+    });
+    actions.appendChild(openBtn);
+
+    const folderBtn = createActionButton('folder', 'Show in Folder', () => {
+      window.electronAPI.showDownloadInFolder(download.id);
+    });
+    actions.appendChild(folderBtn);
+
+    const removeBtn = createActionButton('remove', 'Remove', () => {
+      window.electronAPI.removeDownload(download.id);
+    });
+    actions.appendChild(removeBtn);
+
+    item.appendChild(actions);
+    container.appendChild(item);
+  });
+}
+
+function createActionButton(type, title, onClick) {
+  const btn = document.createElement('button');
+  btn.className = `action-btn action-${type}`;
+  btn.title = title;
+
+  const icons = {
+    pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>',
+    resume: '<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>',
+    cancel: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+    open: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
+    folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
+    remove: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>'
+  };
+
+  const template = document.createElement('template');
+  template.innerHTML = (icons[type] || '').trim();
+  if (template.content.firstChild) {
+    btn.appendChild(template.content.cloneNode(true));
+  }
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    onClick();
+  });
+
+  return btn;
+}
+
+function showDownloadContextMenu(download) {
+  // Create a simple context menu
+  const existing = document.querySelector('.download-context-menu');
+  if (existing) existing.remove();
+
+  const menu = document.createElement('div');
+  menu.className = 'download-context-menu';
+
+  const openOption = document.createElement('div');
+  openOption.className = 'context-menu-item';
+  openOption.textContent = 'Open File';
+  openOption.addEventListener('click', () => {
+    window.electronAPI.openDownload(download.id);
+    menu.remove();
+  });
+  menu.appendChild(openOption);
+
+  const folderOption = document.createElement('div');
+  folderOption.className = 'context-menu-item';
+  folderOption.textContent = 'Show in Folder';
+  folderOption.addEventListener('click', () => {
+    window.electronAPI.showDownloadInFolder(download.id);
+    menu.remove();
+  });
+  menu.appendChild(folderOption);
+
+  const removeOption = document.createElement('div');
+  removeOption.className = 'context-menu-item';
+  removeOption.textContent = 'Remove from List';
+  removeOption.addEventListener('click', () => {
+    window.electronAPI.removeDownload(download.id);
+    menu.remove();
+  });
+  menu.appendChild(removeOption);
+
+  document.body.appendChild(menu);
+
+  // Position near the cursor (simplified)
+  menu.style.position = 'fixed';
+  menu.style.left = `${event.clientX}px`;
+  menu.style.top = `${event.clientY}px`;
+
+  // Close on click outside
+  setTimeout(() => {
+    document.addEventListener('click', function closeMenu() {
+      menu.remove();
+      document.removeEventListener('click', closeMenu);
+    });
+  }, 0);
+}
+
+function getFileIcon(filename) {
+  const ext = filename.split('.').pop().toLowerCase();
+  const iconMap = {
+    pdf: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 2l5 5h-5V4zM8 14h1v4H8v-4zm3 0h2v4h-2v-4zm4 0h1v4h-1v-4z"/></svg>',
+    doc: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/></svg>',
+    docx: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/></svg>',
+    zip: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 6h-8l-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-2 6h-2v2h2v2h-2v2h-2v-2h2v-2h-2v-2h2v-2h-2V8h2v2h2v2z"/></svg>',
+    default: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 2l5 5h-5V4z"/></svg>'
+  };
+  return iconMap[ext] || iconMap.default;
+}
+
+function truncateFilename(filename, maxLength) {
+  if (filename.length <= maxLength) return filename;
+  const ext = filename.includes('.') ? '.' + filename.split('.').pop() : '';
+  const nameWithoutExt = filename.slice(0, filename.length - ext.length);
+  const truncatedName = nameWithoutExt.slice(0, maxLength - ext.length - 3);
+  return truncatedName + '...' + ext;
+}
+
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+// ==================== History Functions ====================
+
+function renderHistory() {
+  const container = document.getElementById('history-list');
+  const emptyState = document.getElementById('history-empty');
+
+  container.textContent = '';
+
+  if (historySessions.length === 0) {
+    emptyState.style.display = 'block';
+    container.style.display = 'none';
+    return;
+  }
+
+  emptyState.style.display = 'none';
+  container.style.display = 'block';
+
+  // Group sessions by date
+  const groupedSessions = groupSessionsByDate(historySessions);
+
+  for (const [dateLabel, sessions] of Object.entries(groupedSessions)) {
+    const dateGroup = document.createElement('div');
+    dateGroup.className = 'history-date-group';
+
+    const dateHeader = document.createElement('div');
+    dateHeader.className = 'history-date-header';
+    dateHeader.textContent = dateLabel;
+    dateGroup.appendChild(dateHeader);
+
+    sessions.forEach(session => {
+      const item = createHistoryItem(session);
+      dateGroup.appendChild(item);
+    });
+
+    container.appendChild(dateGroup);
+  }
+}
+
+function groupSessionsByDate(sessions) {
+  const groups = {};
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+
+  sessions.forEach(session => {
+    const sessionDate = new Date(session.timestamp);
+    const sessionDay = new Date(sessionDate.getFullYear(), sessionDate.getMonth(), sessionDate.getDate());
+
+    let label;
+    if (sessionDay.getTime() === today.getTime()) {
+      label = 'Today';
+    } else if (sessionDay.getTime() === yesterday.getTime()) {
+      label = 'Yesterday';
+    } else {
+      label = sessionDate.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    }
+
+    if (!groups[label]) {
+      groups[label] = [];
+    }
+    groups[label].push(session);
+  });
+
+  return groups;
+}
+
+function createHistoryItem(session) {
+  const item = document.createElement('div');
+  item.className = 'history-item';
+  item.dataset.sessionId = session.id;
+
+  const icon = document.createElement('div');
+  icon.className = 'history-icon';
+  // Use template for safe SVG insertion
+  const iconTemplate = document.createElement('template');
+  iconTemplate.innerHTML = (SERVICE_ICONS['claude-code'] || '').trim();
+  if (iconTemplate.content.firstChild) {
+    icon.appendChild(iconTemplate.content.cloneNode(true));
+  }
+  item.appendChild(icon);
+
+  const info = document.createElement('div');
+  info.className = 'history-info';
+
+  const name = document.createElement('div');
+  name.className = 'history-name';
+  name.textContent = session.cwdName || 'Session';
+  name.title = session.cwd;
+  info.appendChild(name);
+
+  const meta = document.createElement('div');
+  meta.className = 'history-meta';
+  const time = new Date(session.timestamp).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  const duration = formatDuration(session.duration);
+  meta.textContent = `${time} • ${duration}`;
+  info.appendChild(meta);
+
+  item.appendChild(info);
+
+  const actions = document.createElement('div');
+  actions.className = 'history-actions';
+
+  const viewBtn = createHistoryActionButton('view', 'View', () => {
+    viewHistorySession(session.id);
+  });
+  actions.appendChild(viewBtn);
+
+  const exportBtn = createHistoryActionButton('export', 'Export', async () => {
+    await window.electronAPI.exportHistorySession(session.id);
+  });
+  actions.appendChild(exportBtn);
+
+  const deleteBtn = createHistoryActionButton('delete', 'Delete', async () => {
+    if (confirm('Delete this session from history?')) {
+      await window.electronAPI.deleteHistorySession(session.id);
+    }
+  });
+  actions.appendChild(deleteBtn);
+
+  item.appendChild(actions);
+
+  // Click on item to view
+  item.addEventListener('click', (e) => {
+    if (!e.target.closest('.history-actions')) {
+      viewHistorySession(session.id);
+    }
+  });
+
+  return item;
+}
+
+const HISTORY_ACTION_ICONS = {
+  view: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
+  export: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
+  delete: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>'
+};
+
+function createHistoryActionButton(type, title, onClick) {
+  const btn = document.createElement('button');
+  btn.className = `history-action-btn action-${type}`;
+  btn.title = title;
+
+  // Use template for safe SVG insertion
+  const template = document.createElement('template');
+  template.innerHTML = (HISTORY_ACTION_ICONS[type] || '').trim();
+  if (template.content.firstChild) {
+    btn.appendChild(template.content.cloneNode(true));
+  }
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    onClick();
+  });
+
+  return btn;
+}
+
+async function viewHistorySession(sessionId) {
+  const content = await window.electronAPI.readHistorySession(sessionId);
+  if (content) {
+    showHistoryModal(sessionId, content);
+  }
+}
+
+function showHistoryModal(sessionId, content) {
+  // Create a simple modal to show the session content
+  const existing = document.querySelector('.history-viewer-modal');
+  if (existing) existing.remove();
+
+  const modal = document.createElement('div');
+  modal.className = 'history-viewer-modal';
+
+  const header = document.createElement('div');
+  header.className = 'history-viewer-header';
+
+  const title = document.createElement('span');
+  title.textContent = 'Session History';
+  header.appendChild(title);
+
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'history-viewer-close';
+  closeBtn.textContent = '\u00d7';
+  closeBtn.addEventListener('click', () => modal.remove());
+  header.appendChild(closeBtn);
+
+  modal.appendChild(header);
+
+  const contentArea = document.createElement('div');
+  contentArea.className = 'history-viewer-content';
+  // Strip ANSI codes for display
+  const cleanContent = content.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+  contentArea.textContent = cleanContent;
+  modal.appendChild(contentArea);
+
+  document.body.appendChild(modal);
+
+  // Close on escape
+  const escHandler = (e) => {
+    if (e.key === 'Escape') {
+      modal.remove();
+      document.removeEventListener('keydown', escHandler);
+    }
+  };
+  document.addEventListener('keydown', escHandler);
+}
+
+function formatDuration(ms) {
+  if (!ms || ms < 0) return '--';
+
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+
+  if (hours > 0) {
+    return `${hours}h ${minutes % 60}m`;
+  } else if (minutes > 0) {
+    return `${minutes}m ${seconds % 60}s`;
+  } else {
+    return `${seconds}s`;
+  }
+}
 
 init();

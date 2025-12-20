@@ -10,6 +10,7 @@
 
 const { BrowserView, dialog, Notification } = require('electron');
 const path = require('path');
+const os = require('os');
 const { execFile } = require('child_process');
 const { getServiceType } = require('./ServiceRegistry');
 
@@ -21,7 +22,7 @@ try {
   console.log('node-pty not available - terminal features disabled');
 }
 
-const SIDEBAR_WIDTH = 160;
+const DEFAULT_SIDEBAR_WIDTH = 160;
 
 // Pattern that indicates Claude Code is actively working
 const CLAUDE_WORKING_PATTERN = /Esc to interrupt/i;
@@ -41,12 +42,16 @@ class ViewManager {
    * @param {Object} options
    * @param {BrowserWindow} options.mainWindow - The main Electron window
    * @param {Object} options.store - electron-store instance
+   * @param {Function} options.getSidebarWidth - Function to get current sidebar width
    * @param {Function} options.onTabsChanged - Callback when tabs change
+   * @param {HistoryManager} options.historyManager - Optional history manager for session recording
    */
-  constructor({ mainWindow, store, onTabsChanged }) {
+  constructor({ mainWindow, store, getSidebarWidth, onTabsChanged, historyManager }) {
     this.mainWindow = mainWindow;
     this.store = store;
+    this.getSidebarWidth = getSidebarWidth || (() => DEFAULT_SIDEBAR_WIDTH);
     this.onTabsChanged = onTabsChanged;
+    this.historyManager = historyManager;
 
     // View storage
     this.webViews = new Map();      // tabId -> BrowserView
@@ -58,6 +63,9 @@ class ViewManager {
     this.terminalOutputBuffer = new Map();
     this.terminalPromptState = new Map();
     this.promptCheckTimers = new Map();
+
+    // History session tracking: tabId -> sessionId
+    this.terminalSessions = new Map();
 
     // Usage tracking for Claude Code tabs
     this.usageCache = {
@@ -196,7 +204,13 @@ class ViewManager {
       return null;
     }
 
-    const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/bash';
+    // Check if there's already a PTY for this tab
+    const existingPty = this.terminalPtys.get(tabId);
+    if (existingPty) {
+      return existingPty;
+    }
+
+    const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/zsh';
 
     // Build claude command based on mode
     let claudeCmd = 'claude';
@@ -206,16 +220,46 @@ class ViewManager {
       claudeCmd = 'claude --resume';
     }
 
+    // Use login shell (-l) to ensure PATH is set up from user's profile
+    // This is crucial for packaged apps launched from Finder
+    const shellArgs = process.platform === 'win32'
+      ? ['-Command', claudeCmd]
+      : ['-l', '-c', claudeCmd];
+
+    // Build environment with common PATH additions for CLI tools
+    const env = { ...process.env, TERM: 'xterm-256color' };
+    if (process.platform !== 'win32') {
+      // Ensure common CLI tool directories are in PATH
+      const homedir = os.homedir();
+      const additionalPaths = [
+        '/usr/local/bin',
+        '/opt/homebrew/bin',
+        `${homedir}/.local/bin`,
+        `${homedir}/.npm-global/bin`,
+        `${homedir}/.nvm/versions/node/*/bin`,
+        '/usr/local/opt/node/bin'
+      ].join(':');
+      env.PATH = `${additionalPaths}:${env.PATH || '/usr/bin:/bin'}`;
+    }
+
     try {
-      const ptyProcess = pty.spawn(shell, ['-c', claudeCmd], {
+      const ptyProcess = pty.spawn(shell, shellArgs, {
         name: 'xterm-256color',
         cols,
         rows,
         cwd,
-        env: { ...process.env, TERM: 'xterm-256color' }
+        env
       });
 
       this.terminalPtys.set(tabId, ptyProcess);
+
+      // Start history recording if enabled
+      if (this.historyManager) {
+        const sessionId = this.historyManager.startSession(tabId, cwd, { mode });
+        if (sessionId) {
+          this.terminalSessions.set(tabId, sessionId);
+        }
+      }
 
       // Forward PTY output
       ptyProcess.onData(data => {
@@ -242,6 +286,12 @@ class ViewManager {
   _handlePtyOutput(tabId, data) {
     const view = this.terminalViews.get(tabId);
     if (!view || view.webContents.isDestroyed()) return;
+
+    // Capture to history
+    const sessionId = this.terminalSessions.get(tabId);
+    if (sessionId && this.historyManager) {
+      this.historyManager.captureOutput(sessionId, data);
+    }
 
     // Send or buffer data
     if (this.terminalReadyState.get(tabId)) {
@@ -290,6 +340,15 @@ class ViewManager {
   _handlePtyExit(tabId, exitCode, signal) {
     console.log(`Terminal ${tabId} process exited with code ${exitCode}, signal ${signal}`);
 
+    // End history session
+    const sessionId = this.terminalSessions.get(tabId);
+    if (sessionId && this.historyManager) {
+      this.historyManager.endSession(sessionId, exitCode).catch(err => {
+        console.error(`Failed to save history session ${sessionId}:`, err);
+      });
+      this.terminalSessions.delete(tabId);
+    }
+
     const view = this.terminalViews.get(tabId);
     if (view && !view.webContents.isDestroyed()) {
       if (exitCode === 127) {
@@ -315,6 +374,24 @@ class ViewManager {
     } else {
       const buffer = this.terminalOutputBuffer.get(tabId) || [];
       buffer.push(errorMsg);
+      this.terminalOutputBuffer.set(tabId, buffer);
+    }
+  }
+
+  /**
+   * Send a message to the terminal (public method for IPC handlers)
+   * @param {string} tabId - The tab ID
+   * @param {string} message - The message to send (can include ANSI codes)
+   */
+  sendTerminalMessage(tabId, message) {
+    const view = this.terminalViews.get(tabId);
+    if (!view || view.webContents.isDestroyed()) return;
+
+    if (this.terminalReadyState.get(tabId)) {
+      view.webContents.send('terminal-data', message);
+    } else {
+      const buffer = this.terminalOutputBuffer.get(tabId) || [];
+      buffer.push(message);
       this.terminalOutputBuffer.set(tabId, buffer);
     }
   }
@@ -742,11 +819,12 @@ class ViewManager {
   updateViewBounds() {
     if (!this.mainWindow) return;
 
+    const sidebarWidth = this.getSidebarWidth();
     const [width, height] = this.mainWindow.getContentSize();
     const viewBounds = {
-      x: SIDEBAR_WIDTH,
+      x: sidebarWidth,
       y: 0,
-      width: width - SIDEBAR_WIDTH,
+      width: width - sidebarWidth,
       height: height
     };
 
@@ -781,6 +859,17 @@ class ViewManager {
    * @param {string} tabId - The tab ID
    */
   destroyView(tabId) {
+    // End or abort history session
+    const sessionId = this.terminalSessions.get(tabId);
+    if (sessionId && this.historyManager) {
+      // Try to end gracefully (save what we have)
+      this.historyManager.endSession(sessionId, -1).catch(() => {
+        // If end fails, abort
+        this.historyManager.abortSession(sessionId);
+      });
+      this.terminalSessions.delete(tabId);
+    }
+
     // Kill PTY if exists
     const ptyProcess = this.terminalPtys.get(tabId);
     if (ptyProcess) {
@@ -899,6 +988,14 @@ class ViewManager {
    * Cleanup all resources
    */
   destroy() {
+    // End all active history sessions
+    if (this.historyManager) {
+      for (const [tabId, sessionId] of this.terminalSessions) {
+        this.historyManager.abortSession(sessionId);
+      }
+    }
+    this.terminalSessions.clear();
+
     // Kill all PTY processes
     for (const [tabId, ptyProcess] of this.terminalPtys) {
       try {

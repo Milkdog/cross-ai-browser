@@ -1,4 +1,4 @@
-const { app, BrowserWindow, BrowserView, ipcMain, globalShortcut, Notification, Menu, dialog } = require('electron');
+const { app, BrowserWindow, BrowserView, ipcMain, globalShortcut, Notification, Menu, dialog, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -8,6 +8,8 @@ const Store = require('electron-store');
 const { SERVICE_TYPES, getServiceType, isValidServiceType, isTerminalAvailable } = require('./core/ServiceRegistry');
 const TabManager = require('./core/TabManager');
 const ViewManager = require('./core/ViewManager');
+const DownloadManager = require('./core/DownloadManager');
+const HistoryManager = require('./core/HistoryManager');
 
 // Set app name (shown in menu bar)
 app.setName('Cross AI Browser');
@@ -20,15 +22,24 @@ const store = new Store({
       mode: 'always' // 'always', 'unfocused', 'inactive-tab'
     },
     tabs: [], // Persisted tabs (new format)
-    tabData: {} // Additional tab data (cwd for terminals)
+    tabData: {}, // Additional tab data (cwd for terminals)
+    downloads: {
+      items: [],
+      settings: { saveMode: 'ask' } // 'ask' or 'auto'
+    },
+    ui: {
+      sidebarExpanded: false
+    }
   }
 });
 
-const SIDEBAR_WIDTH = 160;
+const SIDEBAR_WIDTH = 280; // Always expanded
 
 let mainWindow = null;
 let tabManager = null;
 let viewManager = null;
+let downloadManager = null;
+let historyManager = null;
 let servicePickerWindow = null;
 
 function createWindow() {
@@ -50,13 +61,44 @@ function createWindow() {
   // Initialize TabManager
   tabManager = new TabManager(store);
 
+  // Initialize HistoryManager
+  historyManager = new HistoryManager({
+    store,
+    userDataPath: app.getPath('userData')
+  });
+
+  // Forward history events to renderer
+  historyManager.on('history-updated', (data) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('history-updated', data);
+    }
+  });
+
   // Initialize ViewManager
   viewManager = new ViewManager({
     mainWindow,
     store,
+    getSidebarWidth: () => SIDEBAR_WIDTH,
     onTabsChanged: () => {
       mainWindow.webContents.send('tabs-updated', getTabsForRenderer());
       updateShortcuts();
+    },
+    historyManager
+  });
+
+  // Initialize DownloadManager with shared session
+  const sharedSession = session.fromPartition('persist:shared');
+  downloadManager = new DownloadManager({
+    store,
+    session: sharedSession,
+    getMainWindow: () => mainWindow
+  });
+  downloadManager.initialize();
+
+  // Forward download events to renderer
+  downloadManager.on('downloads-updated', (data) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('downloads-updated', data);
     }
   });
 
@@ -78,6 +120,14 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     viewManager.destroy();
+    if (downloadManager) {
+      downloadManager.destroy();
+      downloadManager = null;
+    }
+    if (historyManager) {
+      historyManager.destroy();
+      historyManager = null;
+    }
     mainWindow = null;
   });
 
@@ -433,41 +483,44 @@ ipcMain.on('set-setting', (event, key, value) => {
   }
 });
 
-let settingsWindow = null;
+let settingsView = null;
 ipcMain.on('open-settings', () => {
-  if (settingsWindow) {
-    settingsWindow.focus();
+  if (settingsView) {
+    closeSettings();
     return;
   }
 
-  const { x, y } = mainWindow.getBounds();
-  settingsWindow = new BrowserWindow({
-    width: 280,
-    height: 200,
-    x: x + 70,
-    y: y + mainWindow.getBounds().height - 250,
-    parent: mainWindow,
-    modal: false,
-    frame: false,
-    resizable: false,
+  settingsView = new BrowserView({
     webPreferences: {
-      preload: path.join(__dirname, 'sidebar-preload.js'),
+      preload: path.join(__dirname, 'settings-preload.js'),
       contextIsolation: true,
       nodeIntegration: false
     }
   });
 
-  settingsWindow.loadFile(path.join(__dirname, 'renderer', 'settings.html'));
+  mainWindow.addBrowserView(settingsView);
 
-  settingsWindow.on('closed', () => {
-    settingsWindow = null;
+  // Position to fill content area (right of sidebar)
+  const [windowWidth, windowHeight] = mainWindow.getContentSize();
+  settingsView.setBounds({
+    x: SIDEBAR_WIDTH,
+    y: 0,
+    width: windowWidth - SIDEBAR_WIDTH,
+    height: windowHeight
   });
 
-  settingsWindow.on('blur', () => {
-    if (settingsWindow) {
-      settingsWindow.close();
-    }
-  });
+  settingsView.webContents.loadFile(path.join(__dirname, 'renderer', 'settings.html'));
+});
+
+function closeSettings() {
+  if (settingsView && mainWindow) {
+    mainWindow.removeBrowserView(settingsView);
+    settingsView = null;
+  }
+}
+
+ipcMain.on('close-settings', () => {
+  closeSettings();
 });
 
 // Tab management handlers
@@ -477,7 +530,7 @@ ipcMain.handle('create-tab', async (event, serviceType) => {
 
 ipcMain.handle('select-folder-and-create-tab', async (event, serviceType) => {
   const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openDirectory'],
+    properties: ['openDirectory', 'createDirectory'],
     title: 'Select folder for Claude Code'
   });
 
@@ -606,7 +659,7 @@ ipcMain.on('show-service-picker', () => {
 // Legacy add-terminal handler (redirects to service picker)
 ipcMain.handle('add-terminal', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
-    properties: ['openDirectory'],
+    properties: ['openDirectory', 'createDirectory'],
     title: 'Select folder for Claude Code'
   });
 
@@ -629,8 +682,30 @@ ipcMain.on('terminal-input', (event, { terminalId, data }) => {
 
 ipcMain.on('terminal-resize', (event, { terminalId, cols, rows }) => {
   const tab = tabManager.getTab(terminalId);
-  if (tab && tab.cwd) {
-    viewManager.handleTerminalResize(terminalId, cols, rows, tab.cwd, tab.mode || 'normal');
+  if (!tab) {
+    console.error(`terminal-resize: Tab ${terminalId} not found`);
+    return;
+  }
+
+  // Try to get cwd from tab or from tabData store
+  let cwd = tab.cwd;
+  let mode = tab.mode || 'normal';
+
+  if (!cwd) {
+    const tabData = store.get('tabData', {});
+    const data = tabData[terminalId];
+    if (data && data.cwd) {
+      cwd = data.cwd;
+      tab.cwd = cwd; // Cache it on the tab object
+      // When restoring from store, use continue mode
+      if (!tab.mode) {
+        mode = 'continue';
+      }
+    }
+  }
+
+  if (cwd) {
+    viewManager.handleTerminalResize(terminalId, cols, rows, cwd, mode);
     // Clear mode after first use
     tab.mode = 'normal';
   } else {
@@ -640,15 +715,55 @@ ipcMain.on('terminal-resize', (event, { terminalId, cols, rows }) => {
 
 ipcMain.on('terminal-reload', (event, { terminalId }) => {
   const tab = tabManager.getTab(terminalId);
-  if (tab && tab.cwd) {
-    viewManager.reloadTerminal(terminalId, tab.cwd);
+  if (!tab) {
+    console.error(`terminal-reload: Tab ${terminalId} not found`);
+    return;
+  }
+
+  // Try to get cwd from tab or from tabData store
+  let cwd = tab.cwd;
+  if (!cwd) {
+    const tabData = store.get('tabData', {});
+    const data = tabData[terminalId];
+    if (data && data.cwd) {
+      cwd = data.cwd;
+      tab.cwd = cwd; // Cache it on the tab object
+    }
+  }
+
+  if (cwd) {
+    viewManager.reloadTerminal(terminalId, cwd);
+  } else {
+    console.error(`terminal-reload: No cwd for tab ${terminalId}`);
+    // Send error to terminal UI
+    viewManager.sendTerminalMessage(terminalId, '\x1b[31mError: No working directory configured. Please close this tab and create a new one.\x1b[0m\r\n');
   }
 });
 
 ipcMain.on('terminal-resume', (event, { terminalId }) => {
   const tab = tabManager.getTab(terminalId);
-  if (tab && tab.cwd) {
-    viewManager.resumeTerminal(terminalId, tab.cwd);
+  if (!tab) {
+    console.error(`terminal-resume: Tab ${terminalId} not found`);
+    return;
+  }
+
+  // Try to get cwd from tab or from tabData store
+  let cwd = tab.cwd;
+  if (!cwd) {
+    const tabData = store.get('tabData', {});
+    const data = tabData[terminalId];
+    if (data && data.cwd) {
+      cwd = data.cwd;
+      tab.cwd = cwd; // Cache it on the tab object
+    }
+  }
+
+  if (cwd) {
+    viewManager.resumeTerminal(terminalId, cwd);
+  } else {
+    console.error(`terminal-resume: No cwd for tab ${terminalId}`);
+    // Send error to terminal UI
+    viewManager.sendTerminalMessage(terminalId, '\x1b[31mError: No working directory configured. Please close this tab and create a new one.\x1b[0m\r\n');
   }
 });
 
@@ -658,6 +773,176 @@ ipcMain.on('terminal-close', (event, { terminalId }) => {
 
 ipcMain.on('terminal-request-usage', async (event, { terminalId }) => {
   viewManager.requestUsageData(terminalId);
+});
+
+// Download management handlers
+// Helper to validate download ID
+function isValidDownloadId(id) {
+  return typeof id === 'string' && id.length > 0;
+}
+
+ipcMain.handle('get-downloads', () => {
+  if (!downloadManager) return { active: [], history: [] };
+  return {
+    active: downloadManager.getActiveDownloads(),
+    history: downloadManager.getDownloadHistory(20)
+  };
+});
+
+ipcMain.handle('pause-download', (event, downloadId) => {
+  if (!downloadManager || !isValidDownloadId(downloadId)) return false;
+  return downloadManager.pauseDownload(downloadId);
+});
+
+ipcMain.handle('resume-download', (event, downloadId) => {
+  if (!downloadManager || !isValidDownloadId(downloadId)) return false;
+  return downloadManager.resumeDownload(downloadId);
+});
+
+ipcMain.handle('cancel-download', (event, downloadId) => {
+  if (!downloadManager || !isValidDownloadId(downloadId)) return false;
+  return downloadManager.cancelDownload(downloadId);
+});
+
+ipcMain.handle('remove-download', (event, downloadId) => {
+  if (!downloadManager || !isValidDownloadId(downloadId)) return false;
+  return downloadManager.removeFromHistory(downloadId);
+});
+
+ipcMain.handle('clear-download-history', () => {
+  if (!downloadManager) return;
+  downloadManager.clearHistory();
+});
+
+ipcMain.handle('open-download', (event, downloadId) => {
+  if (!downloadManager || !isValidDownloadId(downloadId)) return false;
+  return downloadManager.openDownload(downloadId);
+});
+
+ipcMain.handle('show-download-in-folder', (event, downloadId) => {
+  if (!downloadManager || !isValidDownloadId(downloadId)) return false;
+  return downloadManager.showInFolder(downloadId);
+});
+
+ipcMain.handle('get-download-save-mode', () => {
+  if (!downloadManager) return 'ask';
+  return downloadManager.getSaveMode();
+});
+
+ipcMain.handle('set-download-save-mode', (event, mode) => {
+  if (!downloadManager) return false;
+  try {
+    downloadManager.setSaveMode(mode);
+    return true;
+  } catch (err) {
+    console.error('Failed to set download save mode:', err);
+    return false;
+  }
+});
+
+// History management handlers
+ipcMain.handle('get-history-sessions', (event, options = {}) => {
+  if (!historyManager) return [];
+  return historyManager.getAllSessions(options);
+});
+
+ipcMain.handle('get-history-sessions-for-cwd', (event, cwd, limit = 20) => {
+  if (!historyManager) return [];
+  return historyManager.getSessionsForCwd(cwd, limit);
+});
+
+ipcMain.handle('get-history-session', (event, sessionId) => {
+  if (!historyManager) return null;
+  return historyManager.getSessionById(sessionId);
+});
+
+ipcMain.handle('read-history-session', async (event, sessionId) => {
+  if (!historyManager) return null;
+  try {
+    return await historyManager.readSession(sessionId);
+  } catch (err) {
+    console.error(`Failed to read session ${sessionId}:`, err);
+    return null;
+  }
+});
+
+ipcMain.handle('delete-history-session', async (event, sessionId) => {
+  if (!historyManager) return false;
+  try {
+    return await historyManager.deleteSession(sessionId);
+  } catch (err) {
+    console.error(`Failed to delete session ${sessionId}:`, err);
+    return false;
+  }
+});
+
+ipcMain.handle('export-history-session', async (event, sessionId) => {
+  if (!historyManager || !mainWindow) return { success: false };
+
+  const session = historyManager.getSessionById(sessionId);
+  if (!session) return { success: false, error: 'Session not found' };
+
+  // Generate default filename
+  const date = new Date(session.timestamp);
+  const dateStr = date.toISOString().slice(0, 10);
+  const defaultName = `${session.cwdName || 'session'}-${dateStr}.txt`;
+
+  const result = await dialog.showSaveDialog(mainWindow, {
+    defaultPath: defaultName,
+    filters: [
+      { name: 'Text Files', extensions: ['txt'] },
+      { name: 'All Files', extensions: ['*'] }
+    ]
+  });
+
+  if (result.canceled) {
+    return { success: false, cancelled: true };
+  }
+
+  try {
+    await historyManager.exportSession(sessionId, result.filePath);
+    return { success: true, filePath: result.filePath };
+  } catch (err) {
+    console.error(`Failed to export session ${sessionId}:`, err);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('get-history-settings', () => {
+  if (!historyManager) return null;
+  return historyManager.getRetentionSettings();
+});
+
+ipcMain.handle('update-history-settings', (event, settings) => {
+  if (!historyManager) return false;
+  try {
+    historyManager.updateRetentionSettings(settings);
+    return true;
+  } catch (err) {
+    console.error('Failed to update history settings:', err);
+    return false;
+  }
+});
+
+ipcMain.handle('get-history-stats', () => {
+  if (!historyManager) return null;
+  return historyManager.getStorageStats();
+});
+
+ipcMain.handle('clear-history', async () => {
+  if (!historyManager) return false;
+  try {
+    await historyManager.clearAllHistory();
+    return true;
+  } catch (err) {
+    console.error('Failed to clear history:', err);
+    return false;
+  }
+});
+
+ipcMain.handle('is-history-enabled', () => {
+  if (!historyManager) return false;
+  return historyManager.isEnabled();
 });
 
 // Notification handler from webviews

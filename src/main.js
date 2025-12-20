@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const Store = require('electron-store');
 
 // Import core modules
-const { SERVICE_TYPES, getServiceType, isValidServiceType } = require('./core/ServiceRegistry');
+const { SERVICE_TYPES, getServiceType, isValidServiceType, isTerminalAvailable } = require('./core/ServiceRegistry');
 const TabManager = require('./core/TabManager');
 const ViewManager = require('./core/ViewManager');
 
@@ -195,9 +195,15 @@ function showServicePicker(isFirstTime = false) {
     height: windowHeight
   });
 
+  const query = {
+    terminalAvailable: isTerminalAvailable() ? 'true' : 'false'
+  };
+  if (isFirstTime) {
+    query.firstTime = 'true';
+  }
   pickerView.webContents.loadFile(
     path.join(__dirname, 'renderer', 'service-picker.html'),
-    { query: isFirstTime ? { firstTime: 'true' } : {} }
+    { query }
   );
 }
 

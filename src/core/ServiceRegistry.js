@@ -11,6 +11,15 @@
  * - sessionPartition: (web only) shared session partition name
  */
 
+// Check if node-pty is available (needed for terminal services)
+let ptyAvailable = false;
+try {
+  require('node-pty');
+  ptyAvailable = true;
+} catch (e) {
+  // node-pty not available (Windows build or missing native deps)
+}
+
 const SERVICE_TYPES = {
   chatgpt: {
     id: 'chatgpt',
@@ -88,10 +97,19 @@ function getWebServiceTypes() {
 
 /**
  * Get all terminal service types
- * @returns {Object[]} Array of terminal service definitions
+ * @returns {Object[]} Array of terminal service definitions (empty if pty not available)
  */
 function getTerminalServiceTypes() {
+  if (!ptyAvailable) return [];
   return Object.values(SERVICE_TYPES).filter(s => s.type === 'terminal');
+}
+
+/**
+ * Check if terminal features are available
+ * @returns {boolean} True if node-pty is available
+ */
+function isTerminalAvailable() {
+  return ptyAvailable;
 }
 
 /**
@@ -146,5 +164,6 @@ module.exports = {
   getWebServiceTypes,
   getTerminalServiceTypes,
   isValidServiceType,
+  isTerminalAvailable,
   generateTabName
 };

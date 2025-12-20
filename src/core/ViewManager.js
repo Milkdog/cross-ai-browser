@@ -10,9 +10,16 @@
 
 const { BrowserView, dialog, Notification } = require('electron');
 const path = require('path');
-const pty = require('node-pty');
 const { execFile } = require('child_process');
 const { getServiceType } = require('./ServiceRegistry');
+
+// node-pty is optional (not available on Windows)
+let pty = null;
+try {
+  pty = require('node-pty');
+} catch (e) {
+  console.log('node-pty not available - terminal features disabled');
+}
 
 const SIDEBAR_WIDTH = 160;
 
@@ -184,6 +191,11 @@ class ViewManager {
    * @param {string} mode - 'normal', 'continue', or 'resume'
    */
   setupTerminalPty(tabId, cwd, cols = 80, rows = 30, mode = 'normal') {
+    if (!pty) {
+      this._sendTerminalError(tabId, 'Terminal not available on this platform');
+      return null;
+    }
+
     const shell = process.platform === 'win32' ? 'powershell.exe' : process.env.SHELL || '/bin/bash';
 
     // Build claude command based on mode

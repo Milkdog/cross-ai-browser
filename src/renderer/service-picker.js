@@ -50,6 +50,7 @@ function init() {
   // Parse query params for configuration
   const params = new URLSearchParams(window.location.search);
   const isFirstTime = params.get('firstTime') === 'true';
+  const terminalAvailable = params.get('terminalAvailable') !== 'false';
 
   // Update title/description for first-time experience
   if (isFirstTime) {
@@ -58,8 +59,16 @@ function init() {
     closeBtn.style.display = 'none';
   }
 
+  // Filter services based on availability
+  const availableServices = Object.values(SERVICE_TYPES).filter(service => {
+    if (service.type === 'terminal' && !terminalAvailable) {
+      return false;
+    }
+    return true;
+  });
+
   // Render service cards using safe DOM methods
-  Object.values(SERVICE_TYPES).forEach(service => {
+  availableServices.forEach(service => {
     const card = document.createElement('button');
     card.className = 'service-card';
     card.dataset.service = service.id;

@@ -8,6 +8,7 @@ const terminalId = urlParams.get('id');
 let dataListener = null;
 let exitListener = null;
 let usageListener = null;
+let themeChangeListener = null;
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Send terminal input to main process
@@ -59,6 +60,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.send('terminal-close', { terminalId });
   },
 
+  // Save clipboard image to temp file and return the path
+  saveClipboardImage: (imageBuffer) => {
+    return ipcRenderer.invoke('terminal-save-clipboard-image', { terminalId, imageBuffer });
+  },
+
   // Request usage data update
   requestUsageUpdate: () => {
     ipcRenderer.send('terminal-request-usage', { terminalId });
@@ -71,6 +77,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }
     usageListener = (event, data) => callback(data);
     ipcRenderer.on('usage-update', usageListener);
+  },
+
+  // Get current terminal theme
+  getTerminalTheme: () => {
+    return ipcRenderer.invoke('get-terminal-theme');
+  },
+
+  // Listen for theme changes
+  onThemeChanged: (callback) => {
+    if (themeChangeListener) {
+      ipcRenderer.removeListener('terminal-theme-changed', themeChangeListener);
+    }
+    themeChangeListener = (event, themeId) => callback(themeId);
+    ipcRenderer.on('terminal-theme-changed', themeChangeListener);
   },
 
   // Cleanup listeners when terminal is closed
@@ -87,6 +107,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeListener('usage-update', usageListener);
       usageListener = null;
     }
+    if (themeChangeListener) {
+      ipcRenderer.removeListener('terminal-theme-changed', themeChangeListener);
+      themeChangeListener = null;
+    }
   }
 });
 
@@ -100,5 +124,8 @@ window.addEventListener('beforeunload', () => {
   }
   if (usageListener) {
     ipcRenderer.removeListener('usage-update', usageListener);
+  }
+  if (themeChangeListener) {
+    ipcRenderer.removeListener('terminal-theme-changed', themeChangeListener);
   }
 });

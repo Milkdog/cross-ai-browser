@@ -24,8 +24,44 @@ try {
 
 const DEFAULT_SIDEBAR_WIDTH = 160;
 
-// Pattern that indicates Claude Code is actively working
-const CLAUDE_WORKING_PATTERN = /Esc to interrupt/i;
+// Patterns that indicate Claude Code is actively working
+// These should ONLY match content that appears while Claude is actively processing
+const CLAUDE_WORKING_PATTERNS = [
+  /Esc to interrupt/i,
+  /escape to interrupt/i,
+  // Spinner characters used by Claude Code (braille spinners)
+  /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/,
+];
+
+// Check if Claude is currently working
+// Check recent output for working indicators
+function isClaudeWorking(text, debug = false) {
+  // Check the last 800 chars to handle longer output like to-do lists
+  // but not so much that we match old content
+  const recentText = text.slice(-800);
+
+  if (debug) {
+    // Always log pattern check results when debugging
+    const results = CLAUDE_WORKING_PATTERNS.map(p => ({
+      pattern: p.toString(),
+      matches: p.test(recentText)
+    }));
+    const hasEscText = recentText.toLowerCase().includes('esc to interrupt');
+    console.log('[ViewManager] Pattern check:', {
+      hasEscText,
+      textLen: recentText.length,
+      last100: recentText.slice(-100),
+      results
+    });
+  }
+
+  for (const pattern of CLAUDE_WORKING_PATTERNS) {
+    if (pattern.test(recentText)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 // Patterns that indicate Claude Code is ready for user input
 const CLAUDE_PROMPT_PATTERNS = [
@@ -35,6 +71,7 @@ const CLAUDE_PROMPT_PATTERNS = [
   /\[y\/N\]\s*$/i,
   /\(y\/n\)\s*$/i,
   /Press Enter/i,
+  /Claude Code/i,  // The prompt line
 ];
 
 class ViewManager {
@@ -45,13 +82,15 @@ class ViewManager {
    * @param {Function} options.getSidebarWidth - Function to get current sidebar width
    * @param {Function} options.onTabsChanged - Callback when tabs change
    * @param {HistoryManager} options.historyManager - Optional history manager for session recording
+   * @param {Function} options.onTerminalCompleted - Callback when terminal task completes
    */
-  constructor({ mainWindow, store, getSidebarWidth, onTabsChanged, historyManager }) {
+  constructor({ mainWindow, store, getSidebarWidth, onTabsChanged, historyManager, onTerminalCompleted }) {
     this.mainWindow = mainWindow;
     this.store = store;
     this.getSidebarWidth = getSidebarWidth || (() => DEFAULT_SIDEBAR_WIDTH);
     this.onTabsChanged = onTabsChanged;
     this.historyManager = historyManager;
+    this.onTerminalCompleted = onTerminalCompleted;
 
     // View storage
     this.webViews = new Map();      // tabId -> BrowserView
@@ -180,8 +219,20 @@ class ViewManager {
       wasWorking: false,
       lastMessage: '',
       cols: 80,
-      rows: 30
+      rows: 30,
+      startupGracePeriod: true,  // Suppress notifications during initial load
+      hasHadUserInput: false,    // Track if user has sent any input
+      stoppedDebounceTimer: null // Debounce timer for "stopped working" detection
     });
+
+    // End startup grace period after 5 seconds
+    setTimeout(() => {
+      const state = this.terminalPromptState.get(tab.id);
+      if (state && state.startupGracePeriod) {
+        console.log(`[ViewManager] Ending startup grace period for tab ${tab.id}`);
+        state.startupGracePeriod = false;
+      }
+    }, 5000);
 
     // Load terminal HTML
     const terminalHtmlPath = path.join(__dirname, '..', 'renderer', 'terminal.html');
@@ -305,7 +356,18 @@ class ViewManager {
     // Track output for prompt detection
     const promptState = this.terminalPromptState.get(tabId);
     if (promptState) {
-      const cleanData = data.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+      // Comprehensive ANSI/terminal escape sequence stripping
+      const cleanData = data
+        // CSI sequences: \x1b[...
+        .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')
+        // OSC sequences: \x1b]...\x07 or \x1b]...\x1b\\
+        .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+        // Single character escapes
+        .replace(/\x1b[78DMEcn]/g, '')
+        // Two character escapes
+        .replace(/\x1b[()][AB012]/g, '')
+        // Control characters (except newline/carriage return)
+        .replace(/[\x00-\x09\x0b\x0c\x0e-\x1a\x1c-\x1f]/g, '');
       promptState.recentOutput += cleanData;
       if (promptState.recentOutput.length > 3000) {
         promptState.recentOutput = promptState.recentOutput.slice(-3000);
@@ -404,10 +466,48 @@ class ViewManager {
     const promptState = this.terminalPromptState.get(tabId);
     if (!promptState) return;
 
-    const isCurrentlyWorking = CLAUDE_WORKING_PATTERN.test(promptState.recentOutput);
+    // Debug: Log working state checks periodically
+    const shouldDebug = !promptState.lastDebugLog || Date.now() - promptState.lastDebugLog > 5000;
+    const isCurrentlyWorking = isClaudeWorking(promptState.recentOutput, shouldDebug);
+
+    if (shouldDebug) {
+      const recentSnippet = promptState.recentOutput.slice(-300).replace(/\n/g, '\\n');
+      console.log('[ViewManager] Working check:', {
+        tabId,
+        isCurrentlyWorking,
+        wasWorking: promptState.wasWorking,
+        recentOutputLen: promptState.recentOutput.length,
+        snippet: recentSnippet
+      });
+      promptState.lastDebugLog = Date.now();
+    }
+
+    // Track when streaming state changes for terminal (with debouncing)
+    if (isCurrentlyWorking && !promptState.wasWorking) {
+      // Started working - clear any pending "stopped" timer and update immediately
+      if (promptState.stoppedDebounceTimer) {
+        clearTimeout(promptState.stoppedDebounceTimer);
+        promptState.stoppedDebounceTimer = null;
+      }
+      console.log('[ViewManager] Claude started working, tab:', tabId);
+      promptState.wasWorking = true;
+      this._sendTerminalStreamingState(tabId, true, promptState.lastMessage);
+    } else if (!isCurrentlyWorking && promptState.wasWorking) {
+      // Stopped working - debounce to avoid rapid oscillation
+      if (!promptState.stoppedDebounceTimer) {
+        promptState.stoppedDebounceTimer = setTimeout(() => {
+          promptState.stoppedDebounceTimer = null;
+          // Re-check if still not working
+          if (!isClaudeWorking(promptState.recentOutput)) {
+            console.log('[ViewManager] Claude stopped working (confirmed), tab:', tabId);
+            promptState.wasWorking = false;
+            this._sendTerminalStreamingState(tabId, false, null);
+          }
+        }, 500); // Wait 500ms before confirming "stopped"
+      }
+    }
 
     if (isCurrentlyWorking) {
-      promptState.wasWorking = true;
       if (this.promptCheckTimers.has(tabId)) {
         clearTimeout(this.promptCheckTimers.get(tabId));
         this.promptCheckTimers.delete(tabId);
@@ -420,20 +520,47 @@ class ViewManager {
     }
 
     const timer = setTimeout(() => {
-      if (promptState.hasNotifiedSinceLastInput) return;
+      if (promptState.hasNotifiedSinceLastInput) {
+        console.log('[ViewManager] Skipping notification - already notified since last input');
+        return;
+      }
 
       const recentLines = promptState.recentOutput.split('\n').slice(-5).join('\n');
       const isPromptReady = CLAUDE_PROMPT_PATTERNS.some(pattern => pattern.test(recentLines));
       const claudeFinishedWorking = promptState.wasWorking && !isCurrentlyWorking;
 
+      console.log('[ViewManager] Notification check:', {
+        tabId,
+        wasWorking: promptState.wasWorking,
+        isCurrentlyWorking,
+        claudeFinishedWorking,
+        isPromptReady,
+        recentLinesPreview: recentLines.slice(-100)
+      });
+
       if (claudeFinishedWorking || isPromptReady) {
+        console.log('[ViewManager] Sending notification for tab:', tabId);
         promptState.hasNotifiedSinceLastInput = true;
         promptState.wasWorking = false;
         this._sendTerminalNotification(tabId, recentLines);
       }
-    }, 500);
+    }, 200);  // Reduced from 500ms for faster detection
 
     this.promptCheckTimers.set(tabId, timer);
+  }
+
+  /**
+   * Send terminal streaming state to main window
+   * @private
+   */
+  _sendTerminalStreamingState(tabId, isStreaming, taskDescription) {
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.webContents.send('streaming-state-changed', {
+        tabId,
+        isStreaming,
+        taskDescription: taskDescription || (isStreaming ? 'Working...' : null)
+      });
+    }
   }
 
   /**
@@ -441,6 +568,18 @@ class ViewManager {
    * @private
    */
   _sendTerminalNotification(tabId, recentOutput) {
+    // Check if we're in startup grace period (suppress false notifications on initial load)
+    const promptState = this.terminalPromptState.get(tabId);
+    if (promptState?.startupGracePeriod && !promptState?.hasHadUserInput) {
+      console.log('[ViewManager] Suppressing notification - startup grace period, no user input yet');
+      return;
+    }
+
+    // Always notify parent of completion (for badge)
+    if (this.onTerminalCompleted) {
+      this.onTerminalCompleted(tabId);
+    }
+
     const settings = this.store.get('notifications');
     if (!settings?.enabled) return;
 
@@ -460,7 +599,6 @@ class ViewManager {
 
     if (!shouldNotify) return;
 
-    const promptState = this.terminalPromptState.get(tabId);
     let preview = promptState?.lastMessage || 'Ready for input';
     preview = preview.replace(/\s+/g, ' ').trim().slice(0, 100);
 
@@ -674,10 +812,14 @@ class ViewManager {
     if (ptyProcess) {
       ptyProcess.write(data);
 
-      // Reset notification state on Enter
-      if (data.includes('\r') || data.includes('\n')) {
-        const promptState = this.terminalPromptState.get(tabId);
-        if (promptState) {
+      const promptState = this.terminalPromptState.get(tabId);
+      if (promptState) {
+        // Mark that user has sent input - enables notifications after startup
+        promptState.hasHadUserInput = true;
+        promptState.startupGracePeriod = false;
+
+        // Reset notification state on Enter
+        if (data.includes('\r') || data.includes('\n')) {
           promptState.hasNotifiedSinceLastInput = false;
           promptState.wasWorking = false;
           promptState.recentOutput = '';
@@ -855,6 +997,25 @@ class ViewManager {
   }
 
   /**
+   * Get tab ID by webContents
+   * @param {WebContents} webContents - The webContents to find
+   * @returns {string|null} The tab ID or null if not found
+   */
+  getTabIdByWebContents(webContents) {
+    for (const [tabId, view] of this.webViews) {
+      if (view.webContents === webContents) {
+        return tabId;
+      }
+    }
+    for (const [tabId, view] of this.terminalViews) {
+      if (view.webContents === webContents) {
+        return tabId;
+      }
+    }
+    return null;
+  }
+
+  /**
    * Destroy a tab's view and cleanup resources
    * @param {string} tabId - The tab ID
    */
@@ -902,6 +1063,12 @@ class ViewManager {
     // Cleanup terminal state
     this.terminalReadyState.delete(tabId);
     this.terminalOutputBuffer.delete(tabId);
+
+    // Clear debounce timer before deleting state
+    const promptState = this.terminalPromptState.get(tabId);
+    if (promptState?.stoppedDebounceTimer) {
+      clearTimeout(promptState.stoppedDebounceTimer);
+    }
     this.terminalPromptState.delete(tabId);
 
     if (this.promptCheckTimers.has(tabId)) {
@@ -1021,6 +1188,21 @@ class ViewManager {
     this.terminalPromptState.clear();
     this.promptCheckTimers.clear();
     this.usageUpdateTimers.clear();
+  }
+
+  /**
+   * Broadcast a message to all terminal views
+   * @param {string} channel - IPC channel name
+   * @param {*} data - Data to send
+   */
+  broadcastToTerminals(channel, data) {
+    for (const [tabId, view] of this.terminalViews) {
+      try {
+        view.webContents.send(channel, data);
+      } catch (e) {
+        // View may be destroyed
+      }
+    }
   }
 }
 

@@ -13,6 +13,7 @@ function getServiceId() {
 function getResponsePreview(maxLength = 100) {
   const serviceId = getServiceId();
   let text = '';
+  let hasImage = false;
 
   try {
     if (serviceId === 'chatgpt') {
@@ -23,11 +24,40 @@ function getResponsePreview(maxLength = 100) {
         '.assistant-message',
         '[data-testid^="conversation-turn"] .markdown'
       ];
+      let lastMessage = null;
       for (const selector of selectors) {
         const messages = document.querySelectorAll(selector);
         if (messages.length > 0) {
-          text = messages[messages.length - 1].textContent || '';
-          if (text) break;
+          lastMessage = messages[messages.length - 1];
+          break;
+        }
+      }
+
+      if (lastMessage) {
+        // Check if this message contains a generated image
+        const images = lastMessage.querySelectorAll('img');
+        for (const img of images) {
+          const src = img.src || '';
+          // DALL-E images come from OpenAI's CDN
+          if (src.includes('oaidalleapi') || src.includes('openai') ||
+              src.includes('dalle') || img.alt?.toLowerCase().includes('generated')) {
+            hasImage = true;
+            // Try to get the image prompt from alt text or nearby text
+            if (img.alt && img.alt.length > 5 && !img.alt.toLowerCase().includes('image')) {
+              text = `Image: ${img.alt}`;
+            }
+            break;
+          }
+        }
+
+        // If no meaningful image alt text, check for image containers
+        if (hasImage && !text) {
+          text = 'Generated an image';
+        }
+
+        // Fall back to text content if no image
+        if (!hasImage) {
+          text = lastMessage.textContent || '';
         }
       }
     } else if (serviceId === 'claude') {
@@ -70,6 +100,68 @@ function getResponsePreview(maxLength = 100) {
     text = text.substring(0, maxLength) + '...';
   }
   return text;
+}
+
+// Extract a short preview of the user's last prompt
+function getUserPromptPreview(maxLength = 40) {
+  const serviceId = getServiceId();
+  let text = '';
+
+  try {
+    if (serviceId === 'chatgpt') {
+      // ChatGPT: Get last user message
+      const selectors = [
+        '[data-message-author-role="user"]',
+        '.user-turn .markdown',
+        '.user-message'
+      ];
+      for (const selector of selectors) {
+        const messages = document.querySelectorAll(selector);
+        if (messages.length > 0) {
+          text = messages[messages.length - 1].textContent || '';
+          if (text) break;
+        }
+      }
+    } else if (serviceId === 'claude') {
+      // Claude: Get last user message
+      const selectors = [
+        '[data-testid="user-message"]',
+        '.font-user-message',
+        '[class*="user-message"]',
+        '.human-message'
+      ];
+      for (const selector of selectors) {
+        const msgs = document.querySelectorAll(selector);
+        if (msgs.length > 0) {
+          text = msgs[msgs.length - 1].textContent || '';
+          if (text) break;
+        }
+      }
+    } else if (serviceId === 'gemini') {
+      // Gemini: Get last user message
+      const selectors = [
+        '.user-message-text',
+        '[class*="query-content"]',
+        '.query-text'
+      ];
+      for (const selector of selectors) {
+        const queries = document.querySelectorAll(selector);
+        if (queries.length > 0) {
+          text = queries[queries.length - 1].textContent || '';
+          if (text) break;
+        }
+      }
+    }
+  } catch (e) {
+    console.log('[CrossAI] Error getting user prompt:', e);
+  }
+
+  // Clean and truncate
+  text = text.trim().replace(/\s+/g, ' ');
+  if (text.length > maxLength) {
+    text = text.substring(0, maxLength) + '...';
+  }
+  return text || 'Generating response...';
 }
 
 // Streaming detection for each service
@@ -131,6 +223,16 @@ class StreamingDetector {
     // Check periodically as a fallback
     setInterval(() => this.checkStreamingState(), 1000);
 
+    // Log diagnostic info every 10 seconds
+    setInterval(() => {
+      if (this.serviceId === 'chatgpt') {
+        const stopBtn = document.querySelector('[data-testid="stop-button"]');
+        const buttons = document.querySelectorAll('button[aria-label]');
+        const ariaLabels = Array.from(buttons).map(b => b.getAttribute('aria-label')).filter(Boolean);
+        this.log('ChatGPT diagnostic - stopBtn:', !!stopBtn, 'streaming:', this.isStreaming, 'aria-labels:', ariaLabels.slice(0, 5));
+      }
+    }, 10000);
+
     // Initial check
     this.checkStreamingState();
   }
@@ -143,6 +245,13 @@ class StreamingDetector {
     if (this.isStreaming !== this.lastStreamingState) {
       this.log(`Streaming state changed: ${this.lastStreamingState} -> ${this.isStreaming}`);
       this.lastStreamingState = this.isStreaming;
+    }
+
+    // Detect streaming started
+    if (!wasStreaming && this.isStreaming) {
+      this.log('Detected streaming started!');
+      clearTimeout(this.debounceTimer);
+      this.onStreamingStarted();
     }
 
     // Debounce the "finished" detection to avoid false positives
@@ -194,7 +303,56 @@ class StreamingDetector {
       return true;
     }
 
-    // Method 3: Look for button with stop icon (square SVG) that's visible
+    // Method 2.5: Look for streaming/typing indicator classes
+    const streamingIndicators = document.querySelectorAll(
+      '[class*="streaming"], [class*="typing"], [class*="thinking"]'
+    );
+    for (const indicator of streamingIndicators) {
+      if (indicator.offsetParent !== null) {
+        this.log('Detected: streaming/typing class:', indicator.className);
+        return true;
+      }
+    }
+
+    // Method 3: Look for image generation loading states
+    // ChatGPT shows "Creating image..." or similar during DALL-E generation
+    const assistantMessages = document.querySelectorAll('[data-message-author-role="assistant"]');
+    if (assistantMessages.length > 0) {
+      const lastMessage = assistantMessages[assistantMessages.length - 1];
+      const text = lastMessage.textContent || '';
+      // Check for image generation indicators
+      if (text.includes('Creating image') ||
+          text.includes('Generating image') ||
+          text.includes('generating your image')) {
+        this.log('Detected: image generation text');
+        return true;
+      }
+
+      // Check for loading spinner/animation in the last message
+      const spinner = lastMessage.querySelector('[class*="spinner"], [class*="loading"], [class*="animate-spin"], svg.animate-spin');
+      if (spinner) {
+        this.log('Detected: loading spinner in message');
+        return true;
+      }
+    }
+
+    // Method 4: Look for any progress indicators
+    const progressIndicators = document.querySelectorAll(
+      '[role="progressbar"], ' +
+      '[class*="progress"], ' +
+      '[class*="loading"]:not([class*="loaded"]), ' +
+      '.animate-pulse'
+    );
+    for (const indicator of progressIndicators) {
+      // Make sure it's visible and in the main content area
+      if (indicator.offsetParent !== null &&
+          (indicator.closest('main') || indicator.closest('[class*="conversation"]'))) {
+        this.log('Detected: progress indicator');
+        return true;
+      }
+    }
+
+    // Method 5: Look for button with stop icon (square SVG) that's visible
     const buttons = document.querySelectorAll('button');
     for (const btn of buttons) {
       // Check if button has aria-label containing "stop"
@@ -285,11 +443,31 @@ class StreamingDetector {
     return false;
   }
 
+  onStreamingStarted() {
+    this.log(`${this.serviceId} started streaming`);
+
+    // Try to get the user's prompt to show as task description
+    const taskDescription = getUserPromptPreview();
+
+    ipcRenderer.send('ai-streaming-state', {
+      serviceId: this.serviceId,
+      isStreaming: true,
+      taskDescription: taskDescription
+    });
+  }
+
   onStreamingComplete() {
     this.log(`${this.serviceId} finished streaming, sending notification`);
 
     const preview = getResponsePreview();
     this.log(`Preview: "${preview.substring(0, 50)}..."`);
+
+    // Send streaming stopped state
+    ipcRenderer.send('ai-streaming-state', {
+      serviceId: this.serviceId,
+      isStreaming: false,
+      taskDescription: null
+    });
 
     ipcRenderer.send('ai-response-complete', {
       serviceId: this.serviceId,

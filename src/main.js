@@ -10,6 +10,7 @@ const TabManager = require('./core/TabManager');
 const ViewManager = require('./core/ViewManager');
 const DownloadManager = require('./core/DownloadManager');
 const HistoryManager = require('./core/HistoryManager');
+const TerminalThemes = require('./core/TerminalThemes');
 
 // Set app name (shown in menu bar)
 app.setName('Cross AI Browser');
@@ -29,6 +30,9 @@ const store = new Store({
     },
     ui: {
       sidebarExpanded: false
+    },
+    terminal: {
+      theme: 'vscode-dark'
     }
   }
 });
@@ -41,6 +45,38 @@ let viewManager = null;
 let downloadManager = null;
 let historyManager = null;
 let servicePickerWindow = null;
+
+// Track tabs with unread completions (for badge display)
+const tabsWithCompletions = new Set();
+
+// Notify sidebar of completion badge changes
+function sendCompletionBadges() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('completion-badges-updated', Array.from(tabsWithCompletions));
+  }
+}
+
+// Mark a tab as having an unread completion
+function markTabCompleted(tabId) {
+  const activeTabId = viewManager?.getActiveTabId();
+  const isWindowFocused = mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused();
+
+  // Show badge if:
+  // 1. Tab is not the active tab, OR
+  // 2. Window is not focused (user is in another app)
+  if (tabId !== activeTabId || !isWindowFocused) {
+    tabsWithCompletions.add(tabId);
+    sendCompletionBadges();
+  }
+}
+
+// Clear completion badge for a tab
+function clearTabCompletion(tabId) {
+  if (tabsWithCompletions.has(tabId)) {
+    tabsWithCompletions.delete(tabId);
+    sendCompletionBadges();
+  }
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -83,7 +119,10 @@ function createWindow() {
       mainWindow.webContents.send('tabs-updated', getTabsForRenderer());
       updateShortcuts();
     },
-    historyManager
+    historyManager,
+    onTerminalCompleted: (tabId) => {
+      markTabCompleted(tabId);
+    }
   });
 
   // Initialize DownloadManager with shared session
@@ -207,6 +246,9 @@ function switchToTab(tabId) {
   }
 
   viewManager.switchToTab(tabId);
+
+  // Clear completion badge for this tab
+  clearTabCompletion(tabId);
 
   // Update window title
   mainWindow.setTitle(`${tab.name} - Cross AI Browser`);
@@ -452,6 +494,10 @@ ipcMain.handle('get-all-tabs', () => {
   return getTabsForRenderer();
 });
 
+ipcMain.handle('get-completion-badges', () => {
+  return Array.from(tabsWithCompletions);
+});
+
 ipcMain.on('reload-service', (event, tabId) => {
   const tab = tabManager.getTab(tabId);
   if (!tab) return;
@@ -477,10 +523,32 @@ ipcMain.handle('get-settings', () => {
 
 ipcMain.on('set-setting', (event, key, value) => {
   // Validate setting keys
-  const allowedKeys = ['notifications', 'notifications.enabled', 'notifications.mode'];
+  const allowedKeys = ['notifications', 'notifications.enabled', 'notifications.mode', 'terminal.theme'];
   if (allowedKeys.includes(key)) {
+    // Validate terminal theme
+    if (key === 'terminal.theme' && !TerminalThemes.isValidTheme(value)) {
+      return;
+    }
     store.set(key, value);
+
+    // Broadcast theme change to all terminal windows
+    if (key === 'terminal.theme' && viewManager) {
+      viewManager.broadcastToTerminals('terminal-theme-changed', value);
+    }
   }
+});
+
+// Terminal theme handlers
+ipcMain.handle('get-terminal-theme', () => {
+  const themeId = store.get('terminal.theme', TerminalThemes.DEFAULT_THEME);
+  return {
+    id: themeId,
+    theme: TerminalThemes.getTheme(themeId)
+  };
+});
+
+ipcMain.handle('get-all-terminal-themes', () => {
+  return TerminalThemes.getAllThemes();
 });
 
 let settingsView = null;
@@ -775,6 +843,25 @@ ipcMain.on('terminal-request-usage', async (event, { terminalId }) => {
   viewManager.requestUsageData(terminalId);
 });
 
+// Save clipboard image to temp file for terminal paste
+ipcMain.handle('terminal-save-clipboard-image', async (event, { terminalId, imageBuffer }) => {
+  try {
+    const os = require('os');
+    const tempDir = os.tmpdir();
+    const timestamp = Date.now();
+    const imagePath = path.join(tempDir, `claude-paste-${timestamp}.png`);
+
+    // imageBuffer comes as an ArrayBuffer, convert to Buffer
+    const buffer = Buffer.from(imageBuffer);
+    await fs.promises.writeFile(imagePath, buffer);
+
+    return { success: true, path: imagePath };
+  } catch (err) {
+    console.error('Failed to save clipboard image:', err);
+    return { success: false, error: err.message };
+  }
+});
+
 // Download management handlers
 // Helper to validate download ID
 function isValidDownloadId(id) {
@@ -945,19 +1032,65 @@ ipcMain.handle('is-history-enabled', () => {
   return historyManager.isEnabled();
 });
 
+// Streaming state handler from webviews
+ipcMain.on('ai-streaming-state', (event, data) => {
+  const { serviceId, isStreaming, taskDescription } = data;
+
+  // Find the tab that sent this (webviews send serviceId as their tab type, not tab ID)
+  // We need to find which tab's webContents sent this event
+  const senderWebContents = event.sender;
+
+  // Find the tab ID by matching the webContents
+  let tabId = null;
+  if (viewManager) {
+    tabId = viewManager.getTabIdByWebContents(senderWebContents);
+  }
+
+  if (!tabId) {
+    // Fallback: use serviceId if we can't find the tab
+    tabId = serviceId;
+  }
+
+  // Forward streaming state to sidebar
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('streaming-state-changed', {
+      tabId,
+      isStreaming,
+      taskDescription
+    });
+  }
+});
+
 // Notification handler from webviews
 ipcMain.on('ai-response-complete', (event, data) => {
-  const settings = store.get('notifications');
-  if (!settings.enabled) return;
-
   const { serviceId, preview } = data;
 
-  // Find tab by service type or ID
-  const tab = tabManager.getTab(serviceId);
-  if (!tab) return;
+  // Find the tab that sent this by matching webContents
+  const senderWebContents = event.sender;
+  let tabId = null;
+  if (viewManager) {
+    tabId = viewManager.getTabIdByWebContents(senderWebContents);
+  }
+
+  // Fallback to serviceId if we can't find by webContents
+  if (!tabId) {
+    tabId = serviceId;
+  }
+
+  const tab = tabManager.getTab(tabId);
+  if (!tab) {
+    console.log('[Main] ai-response-complete: Could not find tab for', tabId);
+    return;
+  }
 
   const serviceType = getServiceType(tab.serviceType);
   if (!serviceType) return;
+
+  // Always mark tab as completed for badge (if not active)
+  markTabCompleted(tabId);
+
+  const settings = store.get('notifications');
+  if (!settings.enabled) return;
 
   // Check notification mode
   const shouldNotify = (() => {
@@ -967,7 +1100,7 @@ ipcMain.on('ai-response-complete', (event, data) => {
       case 'unfocused':
         return !mainWindow.isFocused();
       case 'inactive-tab':
-        return viewManager.getActiveTabId() !== serviceId;
+        return viewManager.getActiveTabId() !== tabId;
       default:
         return true;
     }

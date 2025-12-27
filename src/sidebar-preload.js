@@ -55,6 +55,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   clearHistory: () => ipcRenderer.invoke('clear-history'),
   isHistoryEnabled: () => ipcRenderer.invoke('is-history-enabled'),
 
+  // Completion badges
+  getCompletionBadges: () => ipcRenderer.invoke('get-completion-badges'),
+
   // Event listeners
   onActiveServiceChanged: (callback) => {
     ipcRenderer.on('active-service-changed', (event, tabId) => callback(tabId));
@@ -70,5 +73,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   onHistoryUpdated: (callback) => {
     ipcRenderer.on('history-updated', (event, data) => callback(data));
+  },
+
+  onCompletionBadgesUpdated: (callback) => {
+    ipcRenderer.on('completion-badges-updated', (event, tabIds) => callback(tabIds));
+  },
+
+  onStreamingStateChanged: (callback) => {
+    ipcRenderer.on('streaming-state-changed', (event, data) => callback(data));
   }
 });

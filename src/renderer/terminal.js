@@ -2,36 +2,73 @@
 // Terminal is available as window.Terminal
 // FitAddon is available as window.FitAddon.FitAddon
 
-// Initialize terminal
+// Default theme (VS Code Dark) - used until saved theme is loaded
+const defaultTheme = {
+  background: '#1e1e1e',
+  foreground: '#d4d4d4',
+  cursor: '#d4d4d4',
+  cursorAccent: '#1e1e1e',
+  selection: 'rgba(99, 102, 241, 0.4)',
+  black: '#1e1e1e',
+  red: '#f44747',
+  green: '#6a9955',
+  yellow: '#dcdcaa',
+  blue: '#569cd6',
+  magenta: '#c586c0',
+  cyan: '#4ec9b0',
+  white: '#d4d4d4',
+  brightBlack: '#808080',
+  brightRed: '#f44747',
+  brightGreen: '#6a9955',
+  brightYellow: '#dcdcaa',
+  brightBlue: '#569cd6',
+  brightMagenta: '#c586c0',
+  brightCyan: '#4ec9b0',
+  brightWhite: '#ffffff'
+};
+
+// Initialize terminal with default theme
 const terminal = new Terminal({
   cursorBlink: true,
   fontSize: 13,
   fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-  theme: {
-    background: '#1e1e1e',
-    foreground: '#d4d4d4',
-    cursor: '#d4d4d4',
-    cursorAccent: '#1e1e1e',
-    selection: 'rgba(99, 102, 241, 0.4)',
-    black: '#1e1e1e',
-    red: '#f44747',
-    green: '#6a9955',
-    yellow: '#dcdcaa',
-    blue: '#569cd6',
-    magenta: '#c586c0',
-    cyan: '#4ec9b0',
-    white: '#d4d4d4',
-    brightBlack: '#808080',
-    brightRed: '#f44747',
-    brightGreen: '#6a9955',
-    brightYellow: '#dcdcaa',
-    brightBlue: '#569cd6',
-    brightMagenta: '#c586c0',
-    brightCyan: '#4ec9b0',
-    brightWhite: '#ffffff'
-  },
+  theme: defaultTheme,
   allowTransparency: false,
   scrollback: 10000
+});
+
+// Apply theme to terminal and update page background
+function applyTheme(theme) {
+  terminal.options.theme = theme;
+  // Also update the page background to match
+  document.body.style.background = theme.background;
+}
+
+// Load saved theme from settings
+async function loadSavedTheme() {
+  try {
+    const themeData = await window.electronAPI.getTerminalTheme();
+    if (themeData && themeData.theme) {
+      applyTheme(themeData.theme);
+    }
+  } catch (e) {
+    console.error('Failed to load terminal theme:', e);
+  }
+}
+
+// Load theme immediately
+loadSavedTheme();
+
+// Listen for theme changes from settings
+window.electronAPI.onThemeChanged(async (themeId) => {
+  try {
+    const themeData = await window.electronAPI.getTerminalTheme();
+    if (themeData && themeData.theme) {
+      applyTheme(themeData.theme);
+    }
+  } catch (e) {
+    console.error('Failed to apply theme change:', e);
+  }
 });
 
 const fitAddon = new FitAddon.FitAddon();
@@ -79,37 +116,117 @@ window.addEventListener('resize', () => {
   resizeTimeout = setTimeout(fitTerminal, 100);
 });
 
+// Track if user has intentionally scrolled away from bottom
+let userScrolledUp = false;
+let lastScrollTime = 0;
+let programmaticScroll = false;
+
 // Send user input to main process
 terminal.onData(data => {
   window.electronAPI.sendInput(data);
+  // Reset scroll state when user sends input - they want to see the response
+  userScrolledUp = false;
+  programmaticScroll = true;
+  terminal.scrollToBottom();
+});
+
+// Check if terminal is scrolled to bottom
+function isAtBottom() {
+  const buffer = terminal.buffer.active;
+  const viewportY = buffer.viewportY;
+  const baseY = buffer.baseY;
+  // At bottom if viewport is at or near the base (within 2 lines tolerance)
+  return viewportY >= baseY - 2;
+}
+
+// Listen for scroll events to detect USER scrolling up (not programmatic)
+terminal.onScroll(() => {
+  // Ignore programmatic scrolls
+  if (programmaticScroll) {
+    programmaticScroll = false;
+    return;
+  }
+
+  // If user scrolled away from bottom, mark it
+  if (!isAtBottom()) {
+    userScrolledUp = true;
+    lastScrollTime = Date.now();
+  } else {
+    // User scrolled back to bottom - re-enable auto-scroll
+    userScrolledUp = false;
+  }
 });
 
 // Receive output from main process
 window.electronAPI.onData(data => {
   terminal.write(data);
+
+  // Only auto-scroll if user hasn't scrolled up recently
+  if (!userScrolledUp) {
+    programmaticScroll = true;
+    terminal.scrollToBottom();
+  }
 });
 
 // Handle copy with Cmd+C when there's a selection
 terminal.attachCustomKeyEventHandler((e) => {
-  // Cmd+C with selection = copy
-  if ((e.metaKey || e.ctrlKey) && e.key === 'c' && terminal.hasSelection()) {
+  // Cmd+C with selection = copy (only on keydown)
+  if ((e.metaKey || e.ctrlKey) && e.key === 'c' && e.type === 'keydown' && terminal.hasSelection()) {
     const selection = terminal.getSelection();
     navigator.clipboard.writeText(selection);
     terminal.clearSelection();
     return false; // Prevent sending Ctrl+C to terminal
   }
 
-  // Cmd+V = paste
-  if ((e.metaKey || e.ctrlKey) && e.key === 'v') {
+  // Cmd+V = paste (supports both text and images)
+  // Only handle keydown to avoid double-paste (handler fires for both keydown and keyup)
+  if ((e.metaKey || e.ctrlKey) && e.key === 'v' && e.type === 'keydown') {
     e.preventDefault(); // Prevent browser's native paste
-    navigator.clipboard.readText().then(text => {
-      window.electronAPI.sendInput(text);
+
+    // Try to read clipboard items to check for images
+    navigator.clipboard.read().then(async (clipboardItems) => {
+      for (const item of clipboardItems) {
+        // Check for image types
+        const imageType = item.types.find(type => type.startsWith('image/'));
+        if (imageType) {
+          try {
+            const blob = await item.getType(imageType);
+            const arrayBuffer = await blob.arrayBuffer();
+            const uint8Array = new Uint8Array(arrayBuffer);
+
+            // Save image to temp file and get path
+            const result = await window.electronAPI.saveClipboardImage(Array.from(uint8Array));
+            if (result.success) {
+              // Send the file path to terminal for Claude to process
+              window.electronAPI.sendInput(result.path);
+            } else {
+              console.error('Failed to save clipboard image:', result.error);
+            }
+            return;
+          } catch (err) {
+            console.error('Error processing clipboard image:', err);
+          }
+        }
+      }
+
+      // No image found, fall back to text paste
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        window.electronAPI.sendInput(text);
+      }
+    }).catch((err) => {
+      // Clipboard API not available or permission denied, fall back to text
+      console.warn('Clipboard read failed, falling back to text:', err);
+      navigator.clipboard.readText().then(text => {
+        window.electronAPI.sendInput(text);
+      }).catch(console.error);
     });
+
     return false;
   }
 
-  // Cmd+K = clear terminal
-  if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+  // Cmd+K = clear terminal (only on keydown)
+  if ((e.metaKey || e.ctrlKey) && e.key === 'k' && e.type === 'keydown') {
     terminal.clear();
     return false;
   }

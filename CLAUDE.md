@@ -1,7 +1,7 @@
 # Cross AI Browser - Project Context
 
 ## Overview
-An Electron app that provides a unified tabbed interface for AI chat services (ChatGPT, Claude, Gemini) and Claude Code terminal sessions. Features multi-tab support, drag-drop reordering, shared sessions, and desktop notifications.
+An Electron app that provides a unified tabbed interface for AI chat services (ChatGPT, Claude, Gemini) and Claude Code terminal sessions. Features multi-tab support, drag-drop reordering, shared sessions, desktop notifications, and real-time streaming indicators.
 
 ## Architecture
 
@@ -16,9 +16,10 @@ An Electron app that provides a unified tabbed interface for AI chat services (C
 ### Core Modules (`src/core/`)
 - `ServiceRegistry.js` - Defines available service types (ChatGPT, Claude, Gemini, Claude Code)
 - `TabManager.js` - Manages tab state, persistence, ordering, and naming
-- `ViewManager.js` - Handles BrowserView lifecycle and switching
+- `ViewManager.js` - Handles BrowserView lifecycle, switching, and terminal streaming detection
 - `DownloadManager.js` - Manages file downloads with thumbnails and history
 - `HistoryManager.js` - Coordinates terminal session history capture and retention
+- `TerminalThemes.js` - Terminal color theme definitions
 
 ### History Modules (`src/core/history/`)
 - `StorageEngine.js` - File I/O abstraction, atomic writes, path hashing by cwd
@@ -34,7 +35,7 @@ An Electron app that provides a unified tabbed interface for AI chat services (C
 - `styles.css` - Sidebar styling
 
 ### Preload Scripts
-- `sidebar-preload.js` - Exposes IPC APIs to sidebar (tabs, downloads, history)
+- `sidebar-preload.js` - Exposes IPC APIs to sidebar (tabs, downloads, history, streaming state)
 - `webview-preload.js` - Detects AI streaming state, sends notifications
 - `terminal-preload.js` - Terminal IPC for pty communication
 - `service-picker-preload.js` - Service picker IPC
@@ -55,6 +56,29 @@ Each AI service has specific selectors for detecting streaming state:
 - **ChatGPT**: Looks for stop button, streaming dots, result-streaming class
 - **Claude**: Looks for stop button with specific SVG path
 - **Gemini**: Looks for stop button, loading indicators
+
+## Streaming Indicators
+Tabs display real-time activity indicators when AI services are generating responses.
+
+### Web AI Services
+- Detected via DOM observation in `webview-preload.js`
+- Shows animated pulsing dots next to tab name
+- Tab background highlights during streaming
+- Task description extracted from user's prompt (first 50 chars)
+
+### Claude Code Terminals
+- Detected via PTY output pattern matching in `ViewManager.js`
+- Patterns: "Esc to interrupt", spinner characters (⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏)
+- Uses 800-character sliding window for pattern detection
+- Debounced state transitions to avoid rapid oscillation
+- Sends streaming state to sidebar via IPC
+
+### Terminal Auto-Scroll
+The terminal (`terminal.js`) implements smart auto-scrolling:
+- Auto-scrolls to bottom when new output arrives (if user is at bottom)
+- Preserves user scroll position when scrolled up
+- Distinguishes between user scrolls and programmatic scrolls
+- Resets to auto-scroll when user scrolls back to bottom
 
 ## Terminal Session History
 Claude Code terminal sessions are automatically captured and persisted for later review.
@@ -108,9 +132,10 @@ src/
 ├── core/
 │   ├── ServiceRegistry.js     # Service type definitions
 │   ├── TabManager.js          # Tab state management
-│   ├── ViewManager.js         # BrowserView management
+│   ├── ViewManager.js         # BrowserView management, streaming detection
 │   ├── DownloadManager.js     # Download management
 │   ├── HistoryManager.js      # Terminal session history coordinator
+│   ├── TerminalThemes.js      # Terminal color themes
 │   └── history/
 │       ├── StorageEngine.js   # File I/O for history
 │       ├── SessionRecorder.js # PTY output buffering

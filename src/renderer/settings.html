@@ -192,6 +192,45 @@
       border-color: rgba(239, 68, 68, 0.3);
       color: #ef4444;
     }
+
+    /* Theme preview */
+    .theme-preview {
+      background: #1e1e1e;
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-family: Menlo, Monaco, 'Courier New', monospace;
+      font-size: 11px;
+      line-height: 1.5;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .preview-line {
+      white-space: nowrap;
+    }
+
+    .preview-prompt {
+      color: #6a9955;
+    }
+
+    .preview-cmd {
+      color: #569cd6;
+    }
+
+    .preview-text {
+      color: #d4d4d4;
+    }
+
+    .preview-green {
+      color: #6a9955;
+    }
+
+    .preview-red {
+      color: #f44747;
+    }
+
+    .preview-yellow {
+      color: #dcdcaa;
+    }
   </style>
 </head>
 <body>
@@ -240,6 +279,23 @@
         <button class="action-btn danger" id="clear-history-btn">Clear Download History</button>
       </div>
     </div>
+
+    <div class="settings-section">
+      <div class="section-title">Terminal</div>
+      <div class="settings-group">
+        <label class="settings-label">Color scheme</label>
+        <select id="terminal-theme">
+          <!-- Populated dynamically -->
+        </select>
+      </div>
+      <div class="settings-group">
+        <div class="theme-preview" id="theme-preview">
+          <div class="preview-line"><span class="preview-prompt">$</span> <span class="preview-cmd">claude</span></div>
+          <div class="preview-line"><span class="preview-text">Hello! How can I help?</span></div>
+          <div class="preview-line"><span class="preview-green">Success</span> <span class="preview-red">Error</span> <span class="preview-yellow">Warning</span></div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -248,6 +304,11 @@
     const downloadSaveMode = document.getElementById('download-save-mode');
     const clearHistoryBtn = document.getElementById('clear-history-btn');
     const closeBtn = document.getElementById('close-btn');
+    const terminalThemeSelect = document.getElementById('terminal-theme');
+    const themePreview = document.getElementById('theme-preview');
+
+    // Theme data cache for preview
+    let themesCache = {};
 
     // Load current settings
     async function loadSettings() {
@@ -260,9 +321,51 @@
 
         const saveMode = await window.electronAPI.getDownloadSaveMode();
         downloadSaveMode.value = saveMode;
+
+        // Load terminal themes
+        await loadTerminalThemes();
       } catch (e) {
         console.error('Failed to load settings:', e);
       }
+    }
+
+    async function loadTerminalThemes() {
+      try {
+        const themes = await window.electronAPI.getAllTerminalThemes();
+        const currentTheme = await window.electronAPI.getTerminalTheme();
+
+        // Clear existing options using safe DOM method
+        while (terminalThemeSelect.firstChild) {
+          terminalThemeSelect.removeChild(terminalThemeSelect.firstChild);
+        }
+
+        // Populate dropdown with safe DOM methods
+        themes.forEach(theme => {
+          const option = document.createElement('option');
+          option.value = theme.id;
+          option.textContent = theme.name;
+          if (theme.id === currentTheme.id) {
+            option.selected = true;
+          }
+          terminalThemeSelect.appendChild(option);
+        });
+
+        // Cache current theme for preview
+        themesCache[currentTheme.id] = currentTheme.theme;
+        updateThemePreview(currentTheme.theme);
+      } catch (e) {
+        console.error('Failed to load terminal themes:', e);
+      }
+    }
+
+    function updateThemePreview(theme) {
+      themePreview.style.background = theme.background;
+      themePreview.querySelector('.preview-text').style.color = theme.foreground;
+      themePreview.querySelector('.preview-prompt').style.color = theme.green;
+      themePreview.querySelector('.preview-cmd').style.color = theme.blue;
+      themePreview.querySelector('.preview-green').style.color = theme.green;
+      themePreview.querySelector('.preview-red').style.color = theme.red;
+      themePreview.querySelector('.preview-yellow').style.color = theme.yellow;
     }
 
     loadSettings();
@@ -278,6 +381,18 @@
 
     downloadSaveMode.onchange = async () => {
       await window.electronAPI.setDownloadSaveMode(downloadSaveMode.value);
+    };
+
+    terminalThemeSelect.onchange = async () => {
+      const themeId = terminalThemeSelect.value;
+      window.electronAPI.setSetting('terminal.theme', themeId);
+
+      // Update preview - fetch theme if not cached
+      if (!themesCache[themeId]) {
+        const themeData = await window.electronAPI.getTerminalTheme();
+        themesCache[themeId] = themeData.theme;
+      }
+      updateThemePreview(themesCache[themeId]);
     };
 
     clearHistoryBtn.onclick = async () => {

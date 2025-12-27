@@ -4,6 +4,19 @@ const fs = require('fs');
 const crypto = require('crypto');
 const Store = require('electron-store');
 
+// Wrap console methods to handle EPIPE errors (occurs in packaged apps launched from Finder)
+['log', 'warn', 'error', 'info', 'debug'].forEach(method => {
+  const original = console[method];
+  console[method] = (...args) => {
+    try {
+      original.apply(console, args);
+    } catch (err) {
+      // Ignore EPIPE errors - stdout/stderr pipe is closed
+      if (err.code !== 'EPIPE') throw err;
+    }
+  };
+});
+
 // Import core modules
 const { SERVICE_TYPES, getServiceType, isValidServiceType, isTerminalAvailable } = require('./core/ServiceRegistry');
 const TabManager = require('./core/TabManager');
@@ -14,6 +27,28 @@ const TerminalThemes = require('./core/TerminalThemes');
 
 // Set app name (shown in menu bar)
 app.setName('Cross AI Browser');
+
+/**
+ * Sanitize text for use in notifications
+ * Removes HTML tags, control characters, and normalizes whitespace
+ */
+function sanitizeNotificationText(text) {
+  if (!text || typeof text !== 'string') {
+    return '';
+  }
+
+  return text
+    // Remove HTML tags
+    .replace(/<[^>]*>/g, '')
+    // Remove control characters (except newline/space)
+    .replace(/[\x00-\x09\x0b\x0c\x0e-\x1f\x7f]/g, '')
+    // Normalize whitespace
+    .replace(/\s+/g, ' ')
+    // Trim
+    .trim()
+    // Limit length
+    .slice(0, 200);
+}
 
 // Initialize settings store
 const store = new Store({
@@ -271,7 +306,8 @@ function showServicePicker(isFirstTime = false) {
     webPreferences: {
       preload: path.join(__dirname, 'service-picker-preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: true
     }
   });
 
@@ -562,7 +598,8 @@ ipcMain.on('open-settings', () => {
     webPreferences: {
       preload: path.join(__dirname, 'settings-preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: true
     }
   });
 
@@ -645,7 +682,8 @@ ipcMain.handle('show-rename-dialog', async (event, tabId) => {
     webPreferences: {
       preload: path.join(__dirname, 'rename-dialog-preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      sandbox: true
     }
   });
 
@@ -1109,7 +1147,7 @@ ipcMain.on('ai-response-complete', (event, data) => {
   if (!shouldNotify) return;
 
   const title = `${tab.name} finished`;
-  const body = preview || 'Response complete';
+  const body = sanitizeNotificationText(preview) || 'Response complete';
 
   const notification = new Notification({
     title: title,

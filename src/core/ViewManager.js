@@ -8,11 +8,42 @@
  * - Session sharing for web services of the same type
  */
 
-const { BrowserView, dialog, Notification } = require('electron');
+const { BrowserView, dialog, Notification, shell } = require('electron');
 const path = require('path');
 const os = require('os');
 const { execFile } = require('child_process');
 const { getServiceType } = require('./ServiceRegistry');
+
+// Allowed origins for navigation security
+const ALLOWED_WEB_ORIGINS = [
+  'https://chat.openai.com',
+  'https://chatgpt.com',
+  'https://claude.ai',
+  'https://gemini.google.com',
+  'https://accounts.google.com',
+  'https://auth0.com',
+  'https://login.microsoftonline.com',
+  'https://appleid.apple.com'
+];
+
+/**
+ * Check if a URL origin is in the allowed list
+ * @param {string} urlString - The URL to check
+ * @returns {boolean} True if the origin is allowed
+ */
+function isAllowedOrigin(urlString) {
+  try {
+    const url = new URL(urlString);
+    return ALLOWED_WEB_ORIGINS.some(allowed => {
+      const allowedUrl = new URL(allowed);
+      // Check exact origin match or valid subdomain
+      return url.origin === allowedUrl.origin ||
+        url.hostname.endsWith('.' + allowedUrl.hostname);
+    });
+  } catch {
+    return false;
+  }
+}
 
 // node-pty is optional (not available on Windows)
 let pty = null;
@@ -24,6 +55,28 @@ try {
 
 const DEFAULT_SIDEBAR_WIDTH = 160;
 
+/**
+ * Sanitize text for use in notifications
+ * Removes HTML tags, control characters, and normalizes whitespace
+ */
+function sanitizeNotificationText(text) {
+  if (!text || typeof text !== 'string') {
+    return '';
+  }
+
+  return text
+    // Remove HTML tags
+    .replace(/<[^>]*>/g, '')
+    // Remove control characters (except newline/space)
+    .replace(/[\x00-\x09\x0b\x0c\x0e-\x1f\x7f]/g, '')
+    // Normalize whitespace
+    .replace(/\s+/g, ' ')
+    // Trim
+    .trim()
+    // Limit length
+    .slice(0, 200);
+}
+
 // Patterns that indicate Claude Code is actively working
 // These should ONLY match content that appears while Claude is actively processing
 const CLAUDE_WORKING_PATTERNS = [
@@ -31,6 +84,8 @@ const CLAUDE_WORKING_PATTERNS = [
   /escape to interrupt/i,
   // Spinner characters used by Claude Code (braille spinners)
   /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/,
+  // Active work indicator (✽ appears when Claude is processing)
+  /✽/,
 ];
 
 // Check if Claude is currently working
@@ -161,6 +216,7 @@ class ViewManager {
         preload: this._getPreloadPath('web'),
         contextIsolation: true,
         nodeIntegration: false,
+        sandbox: true,
         partition: serviceType.sessionPartition,
         webSecurity: true,
         allowRunningInsecureContent: false,
@@ -177,15 +233,52 @@ class ViewManager {
     // Load the service URL
     view.webContents.loadURL(serviceType.url);
 
+    // Navigation security: Restrict navigation to allowed origins
+    view.webContents.on('will-navigate', (event, navigationUrl) => {
+      if (!isAllowedOrigin(navigationUrl)) {
+        console.warn(`[ViewManager] Blocked navigation to: ${navigationUrl}`);
+        event.preventDefault();
+        // Open blocked URLs in external browser
+        shell.openExternal(navigationUrl);
+      }
+    });
+
     // Handle new window requests (OAuth popups)
+    // Uses strict hostname validation to prevent subdomain spoofing attacks
     view.webContents.setWindowOpenHandler(({ url }) => {
-      if (url.includes('accounts.google.com') ||
-          url.includes('auth0.com') ||
-          url.includes('login') ||
-          url.includes('oauth') ||
-          url.includes('signin')) {
+      let parsedUrl;
+      try {
+        parsedUrl = new URL(url);
+      } catch {
+        // Invalid URL, deny
+        return { action: 'deny' };
+      }
+
+      const hostname = parsedUrl.hostname;
+
+      // Strict allowlist for OAuth/auth popup domains
+      const allowedPopupHosts = [
+        'accounts.google.com',
+        'auth0.com',
+        'login.microsoftonline.com',
+        'appleid.apple.com',
+        // The AI service domains themselves (for potential OAuth flows)
+        'chat.openai.com',
+        'chatgpt.com',
+        'claude.ai',
+        'gemini.google.com'
+      ];
+
+      // Check if hostname exactly matches or is a valid subdomain of allowed hosts
+      const isAllowedHost = allowedPopupHosts.some(allowed =>
+        hostname === allowed || hostname.endsWith('.' + allowed)
+      );
+
+      if (isAllowedHost) {
         return { action: 'allow' };
       }
+
+      // All other URLs open in external browser
       require('electron').shell.openExternal(url);
       return { action: 'deny' };
     });
@@ -203,6 +296,7 @@ class ViewManager {
         preload: this._getPreloadPath('terminal'),
         contextIsolation: true,
         nodeIntegration: false,
+        sandbox: true,
         acceptFirstMouse: true
       }
     });
@@ -483,15 +577,18 @@ class ViewManager {
     }
 
     // Track when streaming state changes for terminal (with debouncing)
-    if (isCurrentlyWorking && !promptState.wasWorking) {
-      // Started working - clear any pending "stopped" timer and update immediately
+    if (isCurrentlyWorking) {
+      // Clear any pending "stopped" timer whenever we detect working state
       if (promptState.stoppedDebounceTimer) {
         clearTimeout(promptState.stoppedDebounceTimer);
         promptState.stoppedDebounceTimer = null;
       }
-      console.log('[ViewManager] Claude started working, tab:', tabId);
-      promptState.wasWorking = true;
-      this._sendTerminalStreamingState(tabId, true, promptState.lastMessage);
+      // Only log and send state change when transitioning from not-working to working
+      if (!promptState.wasWorking) {
+        console.log('[ViewManager] Claude started working, tab:', tabId);
+        promptState.wasWorking = true;
+        this._sendTerminalStreamingState(tabId, true, promptState.lastMessage);
+      }
     } else if (!isCurrentlyWorking && promptState.wasWorking) {
       // Stopped working - debounce to avoid rapid oscillation
       if (!promptState.stoppedDebounceTimer) {
@@ -503,7 +600,7 @@ class ViewManager {
             promptState.wasWorking = false;
             this._sendTerminalStreamingState(tabId, false, null);
           }
-        }, 500); // Wait 500ms before confirming "stopped"
+        }, 1500); // Wait 1500ms before confirming "stopped"
       }
     }
 
@@ -599,8 +696,7 @@ class ViewManager {
 
     if (!shouldNotify) return;
 
-    let preview = promptState?.lastMessage || 'Ready for input';
-    preview = preview.replace(/\s+/g, ' ').trim().slice(0, 100);
+    let preview = sanitizeNotificationText(promptState?.lastMessage) || 'Ready for input';
 
     const notification = new Notification({
       title: 'Claude Code',

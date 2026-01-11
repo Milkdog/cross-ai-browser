@@ -18,6 +18,8 @@ const { getServiceType } = require('./ServiceRegistry');
 const ALLOWED_WEB_ORIGINS = [
   'https://chat.openai.com',
   'https://chatgpt.com',
+  'https://auth.openai.com',
+  'https://auth0.openai.com',
   'https://claude.ai',
   'https://gemini.google.com',
   'https://accounts.google.com',
@@ -265,6 +267,8 @@ class ViewManager {
         // The AI service domains themselves (for potential OAuth flows)
         'chat.openai.com',
         'chatgpt.com',
+        'auth.openai.com',
+        'auth0.openai.com',
         'claude.ai',
         'gemini.google.com'
       ];
@@ -796,15 +800,32 @@ class ViewManager {
         }
 
         try {
-          const hexString = stdout.trim();
-          const rawBytes = Buffer.from(hexString, 'hex');
-          const content = rawBytes.slice(1).toString('utf8');
+          const rawData = stdout.trim();
+
+          // Handle both hex-encoded and plain text formats
+          let content;
+          if (/^[0-9a-fA-F]+$/.test(rawData)) {
+            const rawBytes = Buffer.from(rawData, 'hex');
+            content = rawBytes.slice(1).toString('utf8');
+          } else {
+            content = rawData;
+          }
+
+          // Try primary pattern (nested under claudeAiOauth)
           const match = content.match(/"claudeAiOauth"\s*:\s*\{\s*"accessToken"\s*:\s*"([^"]+)"/);
-          if (!match) {
-            reject(new Error('Could not find accessToken'));
+          if (match) {
+            resolve(match[1]);
             return;
           }
-          resolve(match[1]);
+
+          // Try alternate pattern (accessToken at top level)
+          const altMatch = content.match(/"accessToken"\s*:\s*"([^"]+)"/);
+          if (altMatch) {
+            resolve(altMatch[1]);
+            return;
+          }
+
+          reject(new Error('Could not find accessToken in credentials'));
         } catch (e) {
           reject(new Error(`Failed to parse credentials: ${e.message}`));
         }

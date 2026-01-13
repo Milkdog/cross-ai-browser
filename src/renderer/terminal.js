@@ -37,6 +37,45 @@ const terminal = new Terminal({
   scrollback: 10000
 });
 
+// Expose focus function for prompt library
+window.focusTerminal = () => {
+  terminal.focus();
+};
+
+// Expose paste function for prompt library to trigger image paste
+window.triggerPaste = async () => {
+  // This replicates the Cmd+V paste logic from the key handler
+  try {
+    const clipboardItems = await navigator.clipboard.read();
+    for (const item of clipboardItems) {
+      // Check for image types
+      const imageType = item.types.find(type => type.startsWith('image/'));
+      if (imageType) {
+        const blob = await item.getType(imageType);
+        const arrayBuffer = await blob.arrayBuffer();
+        const uint8Array = new Uint8Array(arrayBuffer);
+
+        // Save image to temp file and get path
+        const result = await window.electronAPI.saveClipboardImage(Array.from(uint8Array));
+        if (result.success) {
+          // Send the file path to terminal for Claude to process
+          window.electronAPI.sendInput(result.path);
+          return true;
+        }
+      }
+    }
+    // No image found, fall back to text paste
+    const text = await navigator.clipboard.readText();
+    if (text) {
+      window.electronAPI.sendInput(text);
+      return true;
+    }
+  } catch (err) {
+    console.error('triggerPaste failed:', err);
+  }
+  return false;
+};
+
 // Apply theme to terminal and update page background
 function applyTheme(theme) {
   terminal.options.theme = theme;
@@ -118,15 +157,12 @@ window.addEventListener('resize', () => {
 
 // Track if user has intentionally scrolled away from bottom
 let userScrolledUp = false;
-let lastScrollTime = 0;
-let programmaticScroll = false;
 
 // Send user input to main process
 terminal.onData(data => {
   window.electronAPI.sendInput(data);
   // Reset scroll state when user sends input - they want to see the response
   userScrolledUp = false;
-  programmaticScroll = true;
   terminal.scrollToBottom();
 });
 
@@ -135,35 +171,53 @@ function isAtBottom() {
   const buffer = terminal.buffer.active;
   const viewportY = buffer.viewportY;
   const baseY = buffer.baseY;
-  // At bottom if viewport is at or near the base (within 2 lines tolerance)
-  return viewportY >= baseY - 2;
+  // At bottom if viewport is at or near the base (within 3 lines tolerance)
+  return viewportY >= baseY - 3;
 }
 
-// Listen for scroll events to detect USER scrolling up (not programmatic)
-terminal.onScroll(() => {
-  // Ignore programmatic scrolls
-  if (programmaticScroll) {
-    programmaticScroll = false;
-    return;
-  }
-
-  // If user scrolled away from bottom, mark it
-  if (!isAtBottom()) {
+// Detect user scroll via wheel events on the terminal container
+// This is more reliable than xterm's onScroll which doesn't distinguish sources
+container.addEventListener('wheel', (e) => {
+  // Scrolling up (negative deltaY) = user wants to read previous content
+  if (e.deltaY < 0) {
     userScrolledUp = true;
-    lastScrollTime = Date.now();
-  } else {
-    // User scrolled back to bottom - re-enable auto-scroll
-    userScrolledUp = false;
   }
+  // Scrolling down - check if we reached bottom after a short delay
+  // (to let the scroll complete)
+  if (e.deltaY > 0) {
+    setTimeout(() => {
+      if (isAtBottom()) {
+        userScrolledUp = false;
+      }
+    }, 50);
+  }
+}, { passive: true });
+
+// Also handle keyboard scrolling (Page Up/Down, etc.)
+terminal.attachCustomKeyEventHandler((e) => {
+  if (e.type === 'keydown') {
+    // Page Up or Shift+Page Up - user wants to scroll up
+    if (e.key === 'PageUp') {
+      userScrolledUp = true;
+    }
+    // Page Down - check if at bottom after scroll
+    if (e.key === 'PageDown') {
+      setTimeout(() => {
+        if (isAtBottom()) {
+          userScrolledUp = false;
+        }
+      }, 50);
+    }
+  }
+  return true; // Don't block any keys here, let the other handler deal with copy/paste
 });
 
 // Receive output from main process
 window.electronAPI.onData(data => {
   terminal.write(data);
 
-  // Only auto-scroll if user hasn't scrolled up recently
+  // Only auto-scroll if user hasn't scrolled up
   if (!userScrolledUp) {
-    programmaticScroll = true;
     terminal.scrollToBottom();
   }
 });
@@ -432,3 +486,19 @@ window.electronAPI.onUsageUpdate((data) => {
 setTimeout(() => {
   window.electronAPI.requestUsageUpdate();
 }, 1000);
+
+// Initialize prompt library
+const promptLibrary = new PromptLibrary();
+promptLibrary.init();
+
+// Refit terminal when prompt panel visibility changes
+// The panel resize affects available width for terminal
+const resizeObserver = new ResizeObserver(() => {
+  clearTimeout(resizeTimeout);
+  resizeTimeout = setTimeout(fitTerminal, 100);
+});
+
+const terminalLayout = document.getElementById('terminal-layout');
+if (terminalLayout) {
+  resizeObserver.observe(terminalLayout);
+}

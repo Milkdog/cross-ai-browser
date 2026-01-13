@@ -13,9 +13,9 @@ html, body {
 }
 
 #terminal-container {
-  width: 100%;
-  height: calc(100% - 44px);
+  height: 100%;
   padding: 8px;
+  position: relative;
 }
 
 /* Override xterm styles for better appearance */

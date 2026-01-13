@@ -1,0 +1,810 @@
+/**
+ * PromptLibraryManager - Manages prompts for Claude Code terminals
+ *
+ * Handles:
+ * - CRUD operations for prompts
+ * - Per-directory prompt storage via PromptStorageEngine (project scope)
+ * - Global prompt storage (global scope)
+ * - Panel state persistence per terminal tab
+ * - Label management (multiple labels per prompt)
+ * - Favorites management
+ * - Event emission for UI updates
+ */
+
+const { EventEmitter } = require('events');
+const crypto = require('crypto');
+const PromptStorageEngine = require('./PromptStorageEngine');
+
+// Validation constants
+const MAX_TITLE_LENGTH = 100;
+const MAX_PROMPT_LENGTH = 5000;
+const MAX_PROMPTS_PER_DIRECTORY = 100;
+const MAX_LABEL_LENGTH = 30;
+const MAX_LABELS = 50;
+const MAX_LABELS_PER_PROMPT = 5;
+const MAX_IMAGES_PER_PROMPT = 10;
+
+class PromptLibraryManager extends EventEmitter {
+  /**
+   * @param {Object} options
+   * @param {Object} options.store - electron-store instance
+   * @param {string} options.userDataPath - Electron app.getPath('userData')
+   */
+  constructor({ store, userDataPath }) {
+    super();
+    this.store = store;
+    this.storageEngine = new PromptStorageEngine(userDataPath);
+
+    // Initialize panel states in store if not present
+    if (!this.store.has('promptPanels')) {
+      this.store.set('promptPanels', {});
+    }
+
+    // Initialize labels if not present (migrate from old categories)
+    if (!this.store.has('promptLibrary.labels')) {
+      // Migrate old categories to labels if they exist
+      const oldCategories = this.store.get('promptLibrary.categories', []);
+      this.store.set('promptLibrary.labels', oldCategories);
+    }
+  }
+
+  /**
+   * Migrate old prompt format to new format
+   * @private
+   */
+  _migratePrompt(prompt) {
+    const migrated = { ...prompt };
+
+    // Migrate old 'description' field to 'prompt'
+    if (prompt.description !== undefined && prompt.prompt === undefined) {
+      migrated.prompt = prompt.description;
+      delete migrated.description;
+    }
+
+    // If no prompt content but has title, use title as prompt
+    if (!migrated.prompt && migrated.title) {
+      migrated.prompt = migrated.title;
+      migrated.title = null;
+    }
+
+    // Migrate old 'category' (string) to 'labels' (array)
+    if (prompt.category !== undefined && prompt.labels === undefined) {
+      migrated.labels = prompt.category ? [prompt.category] : [];
+      delete migrated.category;
+    }
+
+    // Add new fields with defaults
+    if (migrated.labels === undefined) migrated.labels = [];
+    if (migrated.images === undefined) migrated.images = [];
+    if (migrated.isFavorite === undefined) migrated.isFavorite = false;
+    if (migrated.scope === undefined) migrated.scope = 'project';
+
+    return migrated;
+  }
+
+  /**
+   * Validate a prompt object
+   * @private
+   */
+  _validatePrompt(prompt) {
+    if (!prompt.prompt || typeof prompt.prompt !== 'string') {
+      throw new Error('Prompt content is required');
+    }
+    if (prompt.prompt.length > MAX_PROMPT_LENGTH) {
+      throw new Error(`Prompt must be ${MAX_PROMPT_LENGTH} characters or less`);
+    }
+    if (prompt.title && prompt.title.length > MAX_TITLE_LENGTH) {
+      throw new Error(`Title must be ${MAX_TITLE_LENGTH} characters or less`);
+    }
+    if (prompt.labels) {
+      if (!Array.isArray(prompt.labels)) {
+        throw new Error('Labels must be an array');
+      }
+      if (prompt.labels.length > MAX_LABELS_PER_PROMPT) {
+        throw new Error(`Maximum of ${MAX_LABELS_PER_PROMPT} labels per prompt`);
+      }
+      for (const label of prompt.labels) {
+        if (typeof label !== 'string' || label.length > MAX_LABEL_LENGTH) {
+          throw new Error(`Each label must be ${MAX_LABEL_LENGTH} characters or less`);
+        }
+      }
+    }
+    if (prompt.images !== undefined) {
+      if (!Array.isArray(prompt.images)) {
+        throw new Error('Images must be an array');
+      }
+      if (prompt.images.length > MAX_IMAGES_PER_PROMPT) {
+        throw new Error(`Maximum of ${MAX_IMAGES_PER_PROMPT} images per prompt`);
+      }
+      for (const img of prompt.images) {
+        if (!img || typeof img.id !== 'string') {
+          throw new Error('Each image must have a valid ID');
+        }
+      }
+    }
+  }
+
+  /**
+   * Get all prompts for a working directory (project + global combined)
+   * @param {string} cwd - Working directory path
+   * @returns {Array} Array of prompt objects sorted by order
+   */
+  getPromptsForCwd(cwd) {
+    if (!cwd) return [];
+
+    // Get project prompts
+    const projectPrompts = this.storageEngine.readPrompts(cwd)
+      .map(p => this._migratePrompt({ ...p, scope: 'project' }));
+
+    // Get global prompts
+    const globalPrompts = this.storageEngine.readGlobalPrompts()
+      .map(p => this._migratePrompt({ ...p, scope: 'global' }));
+
+    // Combine and sort
+    const allPrompts = [...projectPrompts, ...globalPrompts];
+    return allPrompts.sort((a, b) => {
+      // Favorites first
+      if (a.isFavorite !== b.isFavorite) return a.isFavorite ? -1 : 1;
+      // Then by order
+      return a.order - b.order;
+    });
+  }
+
+  /**
+   * Get only project prompts for a working directory
+   * @param {string} cwd - Working directory path
+   * @returns {Array} Array of project prompt objects
+   */
+  getProjectPrompts(cwd) {
+    if (!cwd) return [];
+    return this.storageEngine.readPrompts(cwd)
+      .map(p => this._migratePrompt({ ...p, scope: 'project' }))
+      .sort((a, b) => a.order - b.order);
+  }
+
+  /**
+   * Get only global prompts
+   * @returns {Array} Array of global prompt objects
+   */
+  getGlobalPrompts() {
+    return this.storageEngine.readGlobalPrompts()
+      .map(p => this._migratePrompt({ ...p, scope: 'global' }))
+      .sort((a, b) => a.order - b.order);
+  }
+
+  /**
+   * Get a single prompt by ID
+   * @param {string} cwd - Working directory path
+   * @param {string} promptId - Prompt ID
+   * @returns {Object|null} Prompt object or null if not found
+   */
+  getPromptById(cwd, promptId) {
+    const prompts = this.getPromptsForCwd(cwd);
+    return prompts.find(p => p.id === promptId) || null;
+  }
+
+  /**
+   * Create a new prompt
+   * @param {string} cwd - Working directory path
+   * @param {Object} promptData - Prompt data (prompt, title, labels, isFavorite, scope)
+   * @returns {Promise<Object>} Created prompt
+   */
+  async createPrompt(cwd, promptData) {
+    this._validatePrompt(promptData);
+
+    const scope = promptData.scope || 'project';
+    const prompts = scope === 'global'
+      ? this.getGlobalPrompts()
+      : this.getProjectPrompts(cwd);
+
+    if (prompts.length >= MAX_PROMPTS_PER_DIRECTORY) {
+      throw new Error(`Maximum of ${MAX_PROMPTS_PER_DIRECTORY} prompts per ${scope === 'global' ? 'global library' : 'directory'}`);
+    }
+
+    // Normalize labels: trim, filter empty, dedupe
+    const labels = (promptData.labels || [])
+      .map(l => l.trim())
+      .filter(l => l.length > 0)
+      .filter((l, i, arr) => arr.indexOf(l) === i);
+
+    const now = Date.now();
+    const prompt = {
+      id: `prompt-${crypto.randomUUID()}`,
+      prompt: promptData.prompt.trim(),
+      title: promptData.title ? promptData.title.trim() : null,
+      labels,
+      images: promptData.images || [],
+      isFavorite: promptData.isFavorite || false,
+      reusable: promptData.reusable || false,
+      done: false,
+      scope,
+      order: prompts.length,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    prompts.push(prompt);
+
+    if (scope === 'global') {
+      await this.storageEngine.writeGlobalPrompts(prompts);
+    } else {
+      await this.storageEngine.writePrompts(cwd, prompts);
+    }
+
+    this.emit('prompts-updated', { cwd, prompts: this.getPromptsForCwd(cwd) });
+    return prompt;
+  }
+
+  /**
+   * Update an existing prompt
+   * @param {string} cwd - Working directory path
+   * @param {string} promptId - Prompt ID
+   * @param {Object} updates - Fields to update
+   * @returns {Promise<Object>} Updated prompt
+   */
+  async updatePrompt(cwd, promptId, updates) {
+    // Find the prompt to determine its scope
+    const existingPrompt = this.getPromptById(cwd, promptId);
+    if (!existingPrompt) {
+      throw new Error('Prompt not found');
+    }
+
+    const scope = existingPrompt.scope || 'project';
+    const prompts = scope === 'global'
+      ? this.getGlobalPrompts()
+      : this.getProjectPrompts(cwd);
+
+    const promptIndex = prompts.findIndex(p => p.id === promptId);
+    if (promptIndex === -1) {
+      throw new Error('Prompt not found in storage');
+    }
+
+    // Validate updates
+    if (updates.prompt !== undefined) {
+      if (!updates.prompt || typeof updates.prompt !== 'string') {
+        throw new Error('Prompt content is required');
+      }
+      if (updates.prompt.length > MAX_PROMPT_LENGTH) {
+        throw new Error(`Prompt must be ${MAX_PROMPT_LENGTH} characters or less`);
+      }
+    }
+    if (updates.title !== undefined && updates.title && updates.title.length > MAX_TITLE_LENGTH) {
+      throw new Error(`Title must be ${MAX_TITLE_LENGTH} characters or less`);
+    }
+
+    const prompt = prompts[promptIndex];
+    if (updates.prompt !== undefined) {
+      prompt.prompt = updates.prompt.trim();
+    }
+    if (updates.title !== undefined) {
+      prompt.title = updates.title ? updates.title.trim() : null;
+    }
+    if (updates.labels !== undefined) {
+      // Normalize labels: trim, filter empty, dedupe
+      prompt.labels = (updates.labels || [])
+        .map(l => l.trim())
+        .filter(l => l.length > 0)
+        .filter((l, i, arr) => arr.indexOf(l) === i);
+    }
+    if (updates.isFavorite !== undefined) {
+      prompt.isFavorite = updates.isFavorite;
+    }
+    if (updates.reusable !== undefined) {
+      prompt.reusable = updates.reusable;
+    }
+    if (updates.images !== undefined) {
+      // Validate images array
+      if (!Array.isArray(updates.images)) {
+        throw new Error('Images must be an array');
+      }
+      if (updates.images.length > MAX_IMAGES_PER_PROMPT) {
+        throw new Error(`Maximum of ${MAX_IMAGES_PER_PROMPT} images per prompt`);
+      }
+      prompt.images = updates.images;
+    }
+    prompt.updatedAt = Date.now();
+
+    if (scope === 'global') {
+      await this.storageEngine.writeGlobalPrompts(prompts);
+    } else {
+      await this.storageEngine.writePrompts(cwd, prompts);
+    }
+
+    this.emit('prompts-updated', { cwd, prompts: this.getPromptsForCwd(cwd) });
+    return prompt;
+  }
+
+  /**
+   * Delete a prompt
+   * @param {string} cwd - Working directory path
+   * @param {string} promptId - Prompt ID
+   * @returns {Promise<boolean>} True if deleted
+   */
+  async deletePrompt(cwd, promptId) {
+    // Find the prompt to determine its scope
+    const existingPrompt = this.getPromptById(cwd, promptId);
+    if (!existingPrompt) {
+      return false;
+    }
+
+    const scope = existingPrompt.scope || 'project';
+    const prompts = scope === 'global'
+      ? this.getGlobalPrompts()
+      : this.getProjectPrompts(cwd);
+
+    const promptIndex = prompts.findIndex(p => p.id === promptId);
+    if (promptIndex === -1) {
+      return false;
+    }
+
+    prompts.splice(promptIndex, 1);
+
+    // Renormalize order values
+    prompts.forEach((prompt, index) => {
+      prompt.order = index;
+    });
+
+    if (scope === 'global') {
+      await this.storageEngine.writeGlobalPrompts(prompts);
+    } else {
+      await this.storageEngine.writePrompts(cwd, prompts);
+    }
+
+    this.emit('prompts-updated', { cwd, prompts: this.getPromptsForCwd(cwd) });
+    return true;
+  }
+
+  /**
+   * Duplicate a prompt
+   * @param {string} cwd - Working directory path
+   * @param {string} promptId - Prompt ID to duplicate
+   * @returns {Promise<Object>} New duplicated prompt
+   */
+  async duplicatePrompt(cwd, promptId) {
+    const existingPrompt = this.getPromptById(cwd, promptId);
+    if (!existingPrompt) {
+      throw new Error('Prompt not found');
+    }
+
+    const scope = existingPrompt.scope || 'project';
+    const prompts = scope === 'global'
+      ? this.getGlobalPrompts()
+      : this.getProjectPrompts(cwd);
+
+    if (prompts.length >= MAX_PROMPTS_PER_DIRECTORY) {
+      throw new Error(`Maximum of ${MAX_PROMPTS_PER_DIRECTORY} prompts per ${scope === 'global' ? 'global library' : 'directory'}`);
+    }
+
+    const now = Date.now();
+    const newPrompt = {
+      id: `prompt-${crypto.randomUUID()}`,
+      prompt: existingPrompt.prompt,
+      title: existingPrompt.title ? `${existingPrompt.title} (copy)` : null,
+      labels: [...(existingPrompt.labels || [])],
+      images: [], // Don't copy images to avoid shared references
+      isFavorite: false,
+      reusable: existingPrompt.reusable || false,
+      done: false,
+      scope,
+      order: existingPrompt.order + 1,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    // Insert after original and renormalize orders
+    const originalIndex = prompts.findIndex(p => p.id === promptId);
+    prompts.splice(originalIndex + 1, 0, newPrompt);
+    prompts.forEach((prompt, index) => {
+      prompt.order = index;
+    });
+
+    if (scope === 'global') {
+      await this.storageEngine.writeGlobalPrompts(prompts);
+    } else {
+      await this.storageEngine.writePrompts(cwd, prompts);
+    }
+
+    this.emit('prompts-updated', { cwd, prompts: this.getPromptsForCwd(cwd) });
+    return newPrompt;
+  }
+
+  /**
+   * Reorder prompts within same scope
+   * @param {string} cwd - Working directory path
+   * @param {Array<string>} promptIds - Array of prompt IDs in new order
+   * @param {string} scope - 'project' or 'global'
+   * @returns {Promise<boolean>} True if reordered
+   */
+  async reorderPrompts(cwd, promptIds, scope = 'project') {
+    const prompts = scope === 'global'
+      ? this.getGlobalPrompts()
+      : this.getProjectPrompts(cwd);
+
+    // Validate all IDs exist
+    const existingIds = new Set(prompts.map(p => p.id));
+    for (const id of promptIds) {
+      if (!existingIds.has(id)) {
+        throw new Error(`Prompt ${id} not found`);
+      }
+    }
+
+    // Create a map for quick lookup
+    const promptMap = new Map(prompts.map(p => [p.id, p]));
+
+    // Reorder based on provided IDs
+    const reorderedPrompts = promptIds.map((id, index) => {
+      const prompt = promptMap.get(id);
+      prompt.order = index;
+      return prompt;
+    });
+
+    if (scope === 'global') {
+      await this.storageEngine.writeGlobalPrompts(reorderedPrompts);
+    } else {
+      await this.storageEngine.writePrompts(cwd, reorderedPrompts);
+    }
+
+    this.emit('prompts-updated', { cwd, prompts: this.getPromptsForCwd(cwd) });
+    return true;
+  }
+
+  /**
+   * Toggle favorite status on a prompt
+   * @param {string} cwd - Working directory path
+   * @param {string} promptId - Prompt ID
+   * @returns {Promise<Object>} Updated prompt
+   */
+  async toggleFavorite(cwd, promptId) {
+    const existingPrompt = this.getPromptById(cwd, promptId);
+    if (!existingPrompt) {
+      throw new Error('Prompt not found');
+    }
+
+    const scope = existingPrompt.scope || 'project';
+    const prompts = scope === 'global'
+      ? this.getGlobalPrompts()
+      : this.getProjectPrompts(cwd);
+
+    const prompt = prompts.find(p => p.id === promptId);
+    if (!prompt) {
+      throw new Error('Prompt not found in storage');
+    }
+
+    prompt.isFavorite = !prompt.isFavorite;
+    prompt.updatedAt = Date.now();
+
+    if (scope === 'global') {
+      await this.storageEngine.writeGlobalPrompts(prompts);
+    } else {
+      await this.storageEngine.writePrompts(cwd, prompts);
+    }
+
+    this.emit('prompts-updated', { cwd, prompts: this.getPromptsForCwd(cwd) });
+    return prompt;
+  }
+
+  /**
+   * Toggle reusable flag on a prompt
+   * @param {string} cwd - Working directory path
+   * @param {string} promptId - Prompt ID
+   * @returns {Promise<Object>} Updated prompt
+   */
+  async toggleReusable(cwd, promptId) {
+    const existingPrompt = this.getPromptById(cwd, promptId);
+    if (!existingPrompt) {
+      throw new Error('Prompt not found');
+    }
+
+    const scope = existingPrompt.scope || 'project';
+    const prompts = scope === 'global'
+      ? this.getGlobalPrompts()
+      : this.getProjectPrompts(cwd);
+
+    const prompt = prompts.find(p => p.id === promptId);
+    if (!prompt) {
+      throw new Error('Prompt not found in storage');
+    }
+
+    prompt.reusable = !prompt.reusable;
+    prompt.updatedAt = Date.now();
+
+    if (scope === 'global') {
+      await this.storageEngine.writeGlobalPrompts(prompts);
+    } else {
+      await this.storageEngine.writePrompts(cwd, prompts);
+    }
+
+    this.emit('prompts-updated', { cwd, prompts: this.getPromptsForCwd(cwd) });
+    return prompt;
+  }
+
+  /**
+   * Set labels on a prompt
+   * @param {string} cwd - Working directory path
+   * @param {string} promptId - Prompt ID
+   * @param {Array<string>} labels - Array of label names
+   * @returns {Promise<Object>} Updated prompt
+   */
+  async setLabels(cwd, promptId, labels) {
+    if (labels && labels.length > MAX_LABELS_PER_PROMPT) {
+      throw new Error(`Maximum of ${MAX_LABELS_PER_PROMPT} labels per prompt`);
+    }
+
+    return this.updatePrompt(cwd, promptId, { labels: labels || [] });
+  }
+
+  /**
+   * Mark a prompt as done (moves to Done section unless reusable)
+   * @param {string} cwd - Working directory path
+   * @param {string} promptId - Prompt ID
+   * @returns {Promise<Object>} Updated prompt
+   */
+  async markAsDone(cwd, promptId) {
+    const existingPrompt = this.getPromptById(cwd, promptId);
+    if (!existingPrompt) {
+      throw new Error('Prompt not found');
+    }
+
+    // Don't move reusable prompts to done
+    if (existingPrompt.reusable) {
+      return existingPrompt;
+    }
+
+    const scope = existingPrompt.scope || 'project';
+    const prompts = scope === 'global'
+      ? this.getGlobalPrompts()
+      : this.getProjectPrompts(cwd);
+
+    const prompt = prompts.find(p => p.id === promptId);
+    if (!prompt) {
+      throw new Error('Prompt not found in storage');
+    }
+
+    prompt.done = true;
+    prompt.doneAt = Date.now();
+    prompt.updatedAt = Date.now();
+
+    if (scope === 'global') {
+      await this.storageEngine.writeGlobalPrompts(prompts);
+    } else {
+      await this.storageEngine.writePrompts(cwd, prompts);
+    }
+
+    this.emit('prompts-updated', { cwd, prompts: this.getPromptsForCwd(cwd) });
+    return prompt;
+  }
+
+  /**
+   * Restore a prompt from done
+   * @param {string} cwd - Working directory path
+   * @param {string} promptId - Prompt ID
+   * @returns {Promise<Object>} Updated prompt
+   */
+  async restorePrompt(cwd, promptId) {
+    const existingPrompt = this.getPromptById(cwd, promptId);
+    if (!existingPrompt) {
+      throw new Error('Prompt not found');
+    }
+
+    const scope = existingPrompt.scope || 'project';
+    const prompts = scope === 'global'
+      ? this.getGlobalPrompts()
+      : this.getProjectPrompts(cwd);
+
+    const prompt = prompts.find(p => p.id === promptId);
+    if (!prompt) {
+      throw new Error('Prompt not found in storage');
+    }
+
+    prompt.done = false;
+    delete prompt.doneAt;
+    prompt.updatedAt = Date.now();
+
+    if (scope === 'global') {
+      await this.storageEngine.writeGlobalPrompts(prompts);
+    } else {
+      await this.storageEngine.writePrompts(cwd, prompts);
+    }
+
+    this.emit('prompts-updated', { cwd, prompts: this.getPromptsForCwd(cwd) });
+    return prompt;
+  }
+
+  /**
+   * Clear all done prompts
+   * @param {string} cwd - Working directory path
+   * @returns {Promise<number>} Number of prompts cleared
+   */
+  async clearDonePrompts(cwd) {
+    // Clear from project prompts
+    const projectPrompts = this.getProjectPrompts(cwd);
+    const activeProjectPrompts = projectPrompts.filter(p => !p.done);
+    const projectCleared = projectPrompts.length - activeProjectPrompts.length;
+
+    activeProjectPrompts.forEach((prompt, index) => {
+      prompt.order = index;
+    });
+    await this.storageEngine.writePrompts(cwd, activeProjectPrompts);
+
+    // Clear from global prompts
+    const globalPrompts = this.getGlobalPrompts();
+    const activeGlobalPrompts = globalPrompts.filter(p => !p.done);
+    const globalCleared = globalPrompts.length - activeGlobalPrompts.length;
+
+    activeGlobalPrompts.forEach((prompt, index) => {
+      prompt.order = index;
+    });
+    await this.storageEngine.writeGlobalPrompts(activeGlobalPrompts);
+
+    this.emit('prompts-updated', { cwd, prompts: this.getPromptsForCwd(cwd) });
+    return projectCleared + globalCleared;
+  }
+
+  // --- Label Management ---
+
+  /**
+   * Get all available labels
+   * @returns {Array<string>} Array of label names
+   */
+  getLabels() {
+    return this.store.get('promptLibrary.labels', []);
+  }
+
+  /**
+   * Add a new label
+   * @param {string} name - Label name
+   * @returns {boolean} True if added, false if already exists
+   */
+  addLabel(name) {
+    if (!name || typeof name !== 'string') {
+      throw new Error('Label name is required');
+    }
+
+    const trimmed = name.trim();
+    if (trimmed.length > MAX_LABEL_LENGTH) {
+      throw new Error(`Label must be ${MAX_LABEL_LENGTH} characters or less`);
+    }
+
+    const labels = this.getLabels();
+    if (labels.length >= MAX_LABELS) {
+      throw new Error(`Maximum of ${MAX_LABELS} labels allowed`);
+    }
+
+    if (labels.includes(trimmed)) {
+      return false;
+    }
+
+    labels.push(trimmed);
+    this.store.set('promptLibrary.labels', labels);
+    this.emit('labels-updated', { labels });
+    return true;
+  }
+
+  /**
+   * Delete a label
+   * @param {string} name - Label name
+   * @returns {boolean} True if deleted
+   */
+  deleteLabel(name) {
+    const labels = this.getLabels();
+    const index = labels.indexOf(name);
+    if (index === -1) {
+      return false;
+    }
+
+    labels.splice(index, 1);
+    this.store.set('promptLibrary.labels', labels);
+    this.emit('labels-updated', { labels });
+    return true;
+  }
+
+  // Legacy aliases
+  getCategories() { return this.getLabels(); }
+  addCategory(name) { return this.addLabel(name); }
+  deleteCategory(name) { return this.deleteLabel(name); }
+
+  // --- Panel State Management ---
+
+  /**
+   * Get panel state for a terminal tab
+   * @param {string} tabId - Terminal tab ID
+   * @returns {Object} Panel state { visible, width }
+   */
+  getPanelState(tabId) {
+    const panels = this.store.get('promptPanels', {});
+    return panels[tabId] || { visible: false, width: 300 };
+  }
+
+  /**
+   * Set panel state for a terminal tab
+   * @param {string} tabId - Terminal tab ID
+   * @param {Object} state - Panel state { visible, width }
+   */
+  setPanelState(tabId, state) {
+    const panels = this.store.get('promptPanels', {});
+    panels[tabId] = {
+      visible: state.visible !== undefined ? state.visible : (panels[tabId]?.visible || false),
+      width: state.width !== undefined ? state.width : (panels[tabId]?.width || 300)
+    };
+    this.store.set('promptPanels', panels);
+
+    this.emit('panel-state-changed', { tabId, state: panels[tabId] });
+  }
+
+  /**
+   * Clean up panel state for a deleted tab
+   * @param {string} tabId - Terminal tab ID
+   */
+  cleanupPanelState(tabId) {
+    const panels = this.store.get('promptPanels', {});
+    if (panels[tabId]) {
+      delete panels[tabId];
+      this.store.set('promptPanels', panels);
+    }
+  }
+
+  /**
+   * Get the storage engine (for advanced operations)
+   * @returns {PromptStorageEngine}
+   */
+  getStorageEngine() {
+    return this.storageEngine;
+  }
+
+  // --- Legacy aliases for backward compatibility ---
+
+  getCardsForCwd(cwd) {
+    return this.getPromptsForCwd(cwd);
+  }
+
+  getCardById(cwd, cardId) {
+    return this.getPromptById(cwd, cardId);
+  }
+
+  async createCard(cwd, cardData) {
+    // Convert old card format to new prompt format
+    const promptData = {
+      prompt: cardData.description || cardData.prompt || cardData.title,
+      title: cardData.title || null,
+      reusable: cardData.reusable || false,
+      category: cardData.category || null,
+      isFavorite: cardData.isFavorite || false,
+      scope: cardData.scope || 'project'
+    };
+    return this.createPrompt(cwd, promptData);
+  }
+
+  async updateCard(cwd, cardId, updates) {
+    // Convert old field names
+    const promptUpdates = { ...updates };
+    if (updates.description !== undefined) {
+      promptUpdates.prompt = updates.description;
+      delete promptUpdates.description;
+    }
+    return this.updatePrompt(cwd, cardId, promptUpdates);
+  }
+
+  async deleteCard(cwd, cardId) {
+    return this.deletePrompt(cwd, cardId);
+  }
+
+  async duplicateCard(cwd, cardId) {
+    return this.duplicatePrompt(cwd, cardId);
+  }
+
+  async reorderCards(cwd, cardIds) {
+    return this.reorderPrompts(cwd, cardIds, 'project');
+  }
+
+  // Note: markAsDone already exists as the primary method, no legacy alias needed
+
+  async restoreCard(cwd, cardId) {
+    return this.restorePrompt(cwd, cardId);
+  }
+
+  async clearDoneCards(cwd) {
+    return this.clearDonePrompts(cwd);
+  }
+}
+
+module.exports = PromptLibraryManager;

@@ -9,6 +9,7 @@ let dataListener = null;
 let exitListener = null;
 let usageListener = null;
 let themeChangeListener = null;
+let promptLibraryListener = null;
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Send terminal input to main process
@@ -93,6 +94,80 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('terminal-theme-changed', themeChangeListener);
   },
 
+  // Prompt Library APIs
+  promptLibrary: {
+    // Get all prompts for this terminal's cwd
+    getPrompts: () => ipcRenderer.invoke('prompt-library-get', { terminalId }),
+
+    // Get the working directory
+    getCwd: () => ipcRenderer.invoke('prompt-library-get-cwd', { terminalId }),
+
+    // Create a new prompt
+    createPrompt: (prompt) => ipcRenderer.invoke('prompt-library-create', { terminalId, prompt }),
+
+    // Update a prompt
+    updatePrompt: (promptId, updates) => ipcRenderer.invoke('prompt-library-update', { terminalId, promptId, updates }),
+
+    // Delete a prompt
+    deletePrompt: (promptId) => ipcRenderer.invoke('prompt-library-delete', { terminalId, promptId }),
+
+    // Duplicate a prompt
+    duplicatePrompt: (promptId) => ipcRenderer.invoke('prompt-library-duplicate', { terminalId, promptId }),
+
+    // Reorder prompts
+    reorderPrompts: (promptIds, scope) => ipcRenderer.invoke('prompt-library-reorder', { terminalId, promptIds, scope }),
+
+    // Toggle reusable flag on a prompt
+    toggleReusable: (promptId) => ipcRenderer.invoke('prompt-library-toggle-reusable', { terminalId, promptId }),
+
+    // Toggle favorite flag on a prompt
+    toggleFavorite: (promptId) => ipcRenderer.invoke('prompt-library-toggle-favorite', { terminalId, promptId }),
+
+    // Mark a prompt as done
+    markAsDone: (promptId) => ipcRenderer.invoke('prompt-library-mark-done', { terminalId, promptId }),
+
+    // Restore a prompt from done
+    restorePrompt: (promptId) => ipcRenderer.invoke('prompt-library-restore', { terminalId, promptId }),
+
+    // Clear all done prompts
+    clearDonePrompts: () => ipcRenderer.invoke('prompt-library-clear-done', { terminalId }),
+
+    // Label management
+    getLabels: () => ipcRenderer.invoke('prompt-library-get-labels'),
+    addLabel: (name) => ipcRenderer.invoke('prompt-library-add-label', { name }),
+    deleteLabel: (name) => ipcRenderer.invoke('prompt-library-delete-label', { name }),
+
+    // Legacy category API (redirects to labels)
+    getCategories: () => ipcRenderer.invoke('prompt-library-get-labels'),
+    addCategory: (name) => ipcRenderer.invoke('prompt-library-add-label', { name }),
+    deleteCategory: (name) => ipcRenderer.invoke('prompt-library-delete-label', { name }),
+
+    // Get panel state
+    getPanelState: () => ipcRenderer.invoke('prompt-panel-get-state', { terminalId }),
+
+    // Set panel state
+    setPanelState: (state) => ipcRenderer.send('prompt-panel-set-state', { terminalId, state }),
+
+    // Image management
+    addImage: (filePath) => ipcRenderer.invoke('prompt-image-add', { filePath }),
+    addImageFromDataUrl: (dataUrl) => ipcRenderer.invoke('prompt-image-add-from-data-url', { dataUrl }),
+    removeImage: (imageId) => ipcRenderer.invoke('prompt-image-remove', { imageId }),
+    getImageThumbnail: (imageId) => ipcRenderer.invoke('prompt-image-get-thumbnail', { imageId }),
+    getImagePath: (imageId) => ipcRenderer.invoke('prompt-image-get-path', { imageId }),
+    copyImageToTemp: (imageId) => ipcRenderer.invoke('prompt-image-copy-to-temp', { imageId }),
+    copyImageToClipboard: (imageId) => ipcRenderer.invoke('prompt-image-copy-to-clipboard', { imageId }),
+    pickImageFiles: () => ipcRenderer.invoke('prompt-image-pick-files'),
+
+    // Listen for prompt updates (from other terminals with same cwd)
+    onPromptsUpdated: (callback) => {
+      if (promptLibraryListener) {
+        ipcRenderer.removeListener('prompt-library-updated', promptLibraryListener);
+      }
+      promptLibraryListener = (event, data) => callback(data);
+      ipcRenderer.on('prompt-library-updated', promptLibraryListener);
+    }
+  },
+
   // Cleanup listeners when terminal is closed
   cleanup: () => {
     if (dataListener) {
@@ -111,6 +186,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeListener('terminal-theme-changed', themeChangeListener);
       themeChangeListener = null;
     }
+    if (promptLibraryListener) {
+      ipcRenderer.removeListener('prompt-library-updated', promptLibraryListener);
+      promptLibraryListener = null;
+    }
   }
 });
 
@@ -127,5 +206,8 @@ window.addEventListener('beforeunload', () => {
   }
   if (themeChangeListener) {
     ipcRenderer.removeListener('terminal-theme-changed', themeChangeListener);
+  }
+  if (promptLibraryListener) {
+    ipcRenderer.removeListener('prompt-library-updated', promptLibraryListener);
   }
 });

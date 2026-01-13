@@ -23,6 +23,8 @@ const TabManager = require('./core/TabManager');
 const ViewManager = require('./core/ViewManager');
 const DownloadManager = require('./core/DownloadManager');
 const HistoryManager = require('./core/HistoryManager');
+const PromptLibraryManager = require('./core/PromptLibraryManager');
+const PromptImageManager = require('./core/PromptImageManager');
 const TerminalThemes = require('./core/TerminalThemes');
 
 // Set app name (shown in menu bar)
@@ -79,6 +81,8 @@ let tabManager = null;
 let viewManager = null;
 let downloadManager = null;
 let historyManager = null;
+let promptLibraryManager = null;
+let promptImageManager = null;
 let servicePickerWindow = null;
 
 // Track tabs with unread completions (for badge display)
@@ -142,6 +146,24 @@ function createWindow() {
   historyManager.on('history-updated', (data) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('history-updated', data);
+    }
+  });
+
+  // Initialize PromptLibraryManager
+  promptLibraryManager = new PromptLibraryManager({
+    store,
+    userDataPath: app.getPath('userData')
+  });
+
+  // Initialize PromptImageManager
+  promptImageManager = new PromptImageManager(app.getPath('userData'));
+
+  // Forward prompt library events to relevant terminals
+  promptLibraryManager.on('prompts-updated', (data) => {
+    const { cwd, prompts } = data;
+    // Broadcast to all terminal views that have this cwd
+    if (viewManager) {
+      viewManager.broadcastToTerminalsWithCwd(cwd, 'prompt-library-updated', { prompts });
     }
   });
 
@@ -1068,6 +1090,298 @@ ipcMain.handle('clear-history', async () => {
 ipcMain.handle('is-history-enabled', () => {
   if (!historyManager) return false;
   return historyManager.isEnabled();
+});
+
+// Prompt library management handlers
+ipcMain.handle('prompt-library-get', (event, { terminalId }) => {
+  if (!promptLibraryManager) return [];
+  const cwd = store.get(`tabData.${terminalId}.cwd`);
+  if (!cwd) return [];
+  return promptLibraryManager.getPromptsForCwd(cwd);
+});
+
+ipcMain.handle('prompt-library-get-cwd', (event, { terminalId }) => {
+  return store.get(`tabData.${terminalId}.cwd`) || null;
+});
+
+ipcMain.handle('prompt-library-create', async (event, { terminalId, prompt }) => {
+  if (!promptLibraryManager) return null;
+  const cwd = store.get(`tabData.${terminalId}.cwd`);
+  if (!cwd) return null;
+  try {
+    return await promptLibraryManager.createPrompt(cwd, prompt);
+  } catch (err) {
+    console.error('Failed to create prompt:', err);
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('prompt-library-update', async (event, { terminalId, promptId, updates }) => {
+  if (!promptLibraryManager) return null;
+  const cwd = store.get(`tabData.${terminalId}.cwd`);
+  if (!cwd) return null;
+  try {
+    // Handle image cleanup if images are being updated
+    if (updates.images !== undefined && promptImageManager) {
+      const existingPrompt = promptLibraryManager.getPromptById(cwd, promptId);
+      if (existingPrompt && existingPrompt.images) {
+        const newImageIds = new Set((updates.images || []).map(img => img.id));
+        const removedImages = existingPrompt.images.filter(img => !newImageIds.has(img.id));
+        if (removedImages.length > 0) {
+          await promptImageManager.removeImages(removedImages);
+        }
+      }
+    }
+    return await promptLibraryManager.updatePrompt(cwd, promptId, updates);
+  } catch (err) {
+    console.error('Failed to update prompt:', err);
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('prompt-library-delete', async (event, { terminalId, promptId }) => {
+  if (!promptLibraryManager) return false;
+  const cwd = store.get(`tabData.${terminalId}.cwd`);
+  if (!cwd) return false;
+  try {
+    // Get prompt first to clean up images
+    const prompt = promptLibraryManager.getPromptById(cwd, promptId);
+    if (prompt && prompt.images && promptImageManager) {
+      await promptImageManager.removeImages(prompt.images);
+    }
+    return await promptLibraryManager.deletePrompt(cwd, promptId);
+  } catch (err) {
+    console.error('Failed to delete prompt:', err);
+    return false;
+  }
+});
+
+ipcMain.handle('prompt-library-duplicate', async (event, { terminalId, promptId }) => {
+  if (!promptLibraryManager) return null;
+  const cwd = store.get(`tabData.${terminalId}.cwd`);
+  if (!cwd) return null;
+  try {
+    return await promptLibraryManager.duplicatePrompt(cwd, promptId);
+  } catch (err) {
+    console.error('Failed to duplicate prompt:', err);
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('prompt-library-reorder', async (event, { terminalId, promptIds, scope }) => {
+  if (!promptLibraryManager) return false;
+  const cwd = store.get(`tabData.${terminalId}.cwd`);
+  if (!cwd) return false;
+  try {
+    return await promptLibraryManager.reorderPrompts(cwd, promptIds, scope || 'project');
+  } catch (err) {
+    console.error('Failed to reorder prompts:', err);
+    return false;
+  }
+});
+
+ipcMain.handle('prompt-library-toggle-reusable', async (event, { terminalId, promptId }) => {
+  if (!promptLibraryManager) return null;
+  const cwd = store.get(`tabData.${terminalId}.cwd`);
+  if (!cwd) return null;
+  try {
+    return await promptLibraryManager.toggleReusable(cwd, promptId);
+  } catch (err) {
+    console.error('Failed to toggle reusable:', err);
+    return null;
+  }
+});
+
+ipcMain.handle('prompt-library-toggle-favorite', async (event, { terminalId, promptId }) => {
+  if (!promptLibraryManager) return null;
+  const cwd = store.get(`tabData.${terminalId}.cwd`);
+  if (!cwd) return null;
+  try {
+    return await promptLibraryManager.toggleFavorite(cwd, promptId);
+  } catch (err) {
+    console.error('Failed to toggle favorite:', err);
+    return null;
+  }
+});
+
+ipcMain.handle('prompt-library-mark-done', async (event, { terminalId, promptId }) => {
+  if (!promptLibraryManager) return null;
+  const cwd = store.get(`tabData.${terminalId}.cwd`);
+  if (!cwd) return null;
+  try {
+    return await promptLibraryManager.markAsDone(cwd, promptId);
+  } catch (err) {
+    console.error('Failed to mark prompt done:', err);
+    return null;
+  }
+});
+
+ipcMain.handle('prompt-library-restore', async (event, { terminalId, promptId }) => {
+  if (!promptLibraryManager) return null;
+  const cwd = store.get(`tabData.${terminalId}.cwd`);
+  if (!cwd) return null;
+  try {
+    return await promptLibraryManager.restorePrompt(cwd, promptId);
+  } catch (err) {
+    console.error('Failed to restore prompt:', err);
+    return null;
+  }
+});
+
+ipcMain.handle('prompt-library-clear-done', async (event, { terminalId }) => {
+  if (!promptLibraryManager) return 0;
+  const cwd = store.get(`tabData.${terminalId}.cwd`);
+  if (!cwd) return 0;
+  try {
+    // Get done prompts first to clean up images
+    if (promptImageManager) {
+      const prompts = promptLibraryManager.getPromptsForCwd(cwd);
+      const donePrompts = prompts.filter(p => p.done);
+      for (const prompt of donePrompts) {
+        if (prompt.images) {
+          await promptImageManager.removeImages(prompt.images);
+        }
+      }
+    }
+    return await promptLibraryManager.clearDonePrompts(cwd);
+  } catch (err) {
+    console.error('Failed to clear done prompts:', err);
+    return 0;
+  }
+});
+
+// Label management handlers
+ipcMain.handle('prompt-library-get-labels', () => {
+  if (!promptLibraryManager) return [];
+  return promptLibraryManager.getLabels();
+});
+
+ipcMain.handle('prompt-library-add-label', async (event, { name }) => {
+  if (!promptLibraryManager) return false;
+  try {
+    return promptLibraryManager.addLabel(name);
+  } catch (err) {
+    console.error('Failed to add label:', err);
+    return false;
+  }
+});
+
+ipcMain.handle('prompt-library-delete-label', async (event, { name }) => {
+  if (!promptLibraryManager) return false;
+  try {
+    return promptLibraryManager.deleteLabel(name);
+  } catch (err) {
+    console.error('Failed to delete label:', err);
+    return false;
+  }
+});
+
+// Legacy category handlers (redirect to labels)
+ipcMain.handle('prompt-library-get-categories', () => {
+  if (!promptLibraryManager) return [];
+  return promptLibraryManager.getLabels();
+});
+
+ipcMain.handle('prompt-library-add-category', async (event, { name }) => {
+  if (!promptLibraryManager) return false;
+  try {
+    return promptLibraryManager.addLabel(name);
+  } catch (err) {
+    return false;
+  }
+});
+
+ipcMain.handle('prompt-library-delete-category', async (event, { name }) => {
+  if (!promptLibraryManager) return false;
+  try {
+    return promptLibraryManager.deleteLabel(name);
+  } catch (err) {
+    return false;
+  }
+});
+
+// Panel state handlers
+ipcMain.handle('prompt-panel-get-state', (event, { terminalId }) => {
+  if (!promptLibraryManager) return { visible: false, width: 300 };
+  return promptLibraryManager.getPanelState(terminalId);
+});
+
+ipcMain.on('prompt-panel-set-state', (event, { terminalId, state }) => {
+  if (promptLibraryManager) {
+    promptLibraryManager.setPanelState(terminalId, state);
+  }
+});
+
+// Prompt image handlers
+ipcMain.handle('prompt-image-add', async (event, { filePath }) => {
+  if (!promptImageManager) return { success: false, error: 'Image manager not initialized' };
+  try {
+    return await promptImageManager.addImage(filePath);
+  } catch (err) {
+    console.error('Failed to add image:', err);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('prompt-image-add-from-data-url', async (event, { dataUrl }) => {
+  if (!promptImageManager) return { success: false, error: 'Image manager not initialized' };
+  try {
+    return await promptImageManager.addImageFromDataUrl(dataUrl);
+  } catch (err) {
+    console.error('Failed to add image from data URL:', err);
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('prompt-image-remove', async (event, { imageId }) => {
+  if (!promptImageManager) return false;
+  try {
+    return await promptImageManager.removeImage(imageId);
+  } catch (err) {
+    console.error('Failed to remove image:', err);
+    return false;
+  }
+});
+
+ipcMain.handle('prompt-image-get-thumbnail', (event, { imageId }) => {
+  if (!promptImageManager) {
+    console.log('getThumbnail: promptImageManager not initialized');
+    return null;
+  }
+  const result = promptImageManager.getThumbnailDataUrl(imageId);
+  console.log('getThumbnail:', imageId, result ? `data URL (${result.length} chars)` : 'null');
+  return result;
+});
+
+ipcMain.handle('prompt-image-get-path', (event, { imageId }) => {
+  if (!promptImageManager) return null;
+  return promptImageManager.getImagePath(imageId);
+});
+
+ipcMain.handle('prompt-image-copy-to-temp', async (event, { imageId }) => {
+  if (!promptImageManager) return null;
+  return await promptImageManager.copyToTemp(imageId);
+});
+
+ipcMain.handle('prompt-image-copy-to-clipboard', async (event, { imageId }) => {
+  if (!promptImageManager) return null;
+  return await promptImageManager.copyToClipboard(imageId);
+});
+
+ipcMain.handle('prompt-image-pick-files', async () => {
+  if (!mainWindow) return { canceled: true };
+  try {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }
+      ]
+    });
+    return result;
+  } catch (err) {
+    console.error('Failed to show file picker:', err);
+    return { canceled: true };
+  }
 });
 
 // Streaming state handler from webviews

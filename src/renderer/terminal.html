@@ -3,13 +3,35 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:">
   <title>Terminal</title>
   <link rel="stylesheet" href="../../node_modules/xterm/css/xterm.css">
   <link rel="stylesheet" href="terminal.css">
+  <link rel="stylesheet" href="prompt-library.css">
 </head>
 <body>
-  <div id="terminal-container"></div>
+  <!-- Prompt library toggle button (fixed position) -->
+  <button id="prompt-toggle-btn">Prompts</button>
+
+  <!-- Main layout: terminal + prompt panel -->
+  <div id="terminal-layout">
+    <div id="terminal-container"></div>
+    <div id="resize-divider" style="display: none;"></div>
+    <div id="prompt-panel" class="collapsed">
+      <div id="prompt-panel-header">
+        <h3>Prompt Library</h3>
+        <div class="prompt-panel-actions">
+          <button class="prompt-panel-btn add-btn" title="Add prompt">+</button>
+          <button class="prompt-panel-btn collapse-btn" title="Close panel">×</button>
+        </div>
+      </div>
+      <div id="prompt-search-container">
+        <input type="text" id="prompt-search-input" placeholder="Search prompts...">
+      </div>
+      <div id="prompt-cards-container"></div>
+    </div>
+  </div>
+
   <div id="usage-bars">
     <div class="usage-bar">
       <div class="usage-label">Session</div>
@@ -28,6 +50,7 @@
   </div>
   <script src="../../node_modules/xterm/lib/xterm.js"></script>
   <script src="../../node_modules/xterm-addon-fit/lib/xterm-addon-fit.js"></script>
+  <script src="prompt-library.js"></script>
   <script src="terminal.js"></script>
 </body>
 </html>

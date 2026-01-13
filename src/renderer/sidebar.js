@@ -6,7 +6,7 @@ let downloadHistory = [];
 let historySessions = [];
 let historyExpanded = false;
 let tabsWithCompletions = new Set();
-let streamingTabs = new Map(); // tabId -> { isStreaming, taskDescription }
+let tabsStreaming = new Map(); // tabId -> { isStreaming, taskDescription }
 
 // Service icons (duplicated from ServiceRegistry for renderer)
 const SERVICE_ICONS = {
@@ -94,9 +94,9 @@ async function init() {
   window.electronAPI.onStreamingStateChanged((data) => {
     const { tabId, isStreaming, taskDescription } = data;
     if (isStreaming) {
-      streamingTabs.set(tabId, { isStreaming, taskDescription });
+      tabsStreaming.set(tabId, { isStreaming, taskDescription });
     } else {
-      streamingTabs.delete(tabId);
+      tabsStreaming.delete(tabId);
     }
     renderTabs(allTabs);
   });
@@ -160,7 +160,7 @@ function renderTabs(tabs) {
 
     btn.appendChild(iconDiv);
 
-    // Create text container for name and optional task description
+    // Create text container for name
     const textContainer = document.createElement('div');
     textContainer.className = 'tab-text';
 
@@ -170,36 +170,35 @@ function renderTabs(tabs) {
     nameLabel.textContent = tab.name;
     textContainer.appendChild(nameLabel);
 
-    // Check if this tab is streaming
-    const streamingState = streamingTabs.get(tab.id);
-    if (streamingState && streamingState.isStreaming) {
-      btn.classList.add('is-streaming');
-
-      // Add task description if available
-      if (streamingState.taskDescription) {
-        const taskLabel = document.createElement('div');
-        taskLabel.className = 'tab-task';
-        taskLabel.textContent = streamingState.taskDescription;
-        taskLabel.title = streamingState.taskDescription;
-        textContainer.appendChild(taskLabel);
-      }
-    }
-
     btn.appendChild(textContainer);
 
-    // Add streaming indicator or completion badge
+    // Add streaming indicator if tab is streaming
+    const streamingState = tabsStreaming.get(tab.id);
     if (streamingState && streamingState.isStreaming) {
       const indicator = document.createElement('div');
       indicator.className = 'streaming-indicator';
-      // Three dots for animation
+
+      // Add animated dots
+      const dots = document.createElement('div');
+      dots.className = 'streaming-dots';
       for (let i = 0; i < 3; i++) {
         const dot = document.createElement('span');
         dot.className = 'streaming-dot';
-        indicator.appendChild(dot);
+        dots.appendChild(dot);
       }
+      indicator.appendChild(dots);
+
       btn.appendChild(indicator);
-    } else if (tabsWithCompletions.has(tab.id)) {
-      // Add completion badge if tab has unread completion
+      btn.classList.add('is-streaming');
+
+      // Add task description as tooltip if available
+      if (streamingState.taskDescription) {
+        btn.title = `Working: ${streamingState.taskDescription}`;
+      }
+    }
+
+    // Add completion badge if tab has unread completion
+    if (tabsWithCompletions.has(tab.id)) {
       const badge = document.createElement('div');
       badge.className = 'completion-badge';
       btn.appendChild(badge);
@@ -278,7 +277,6 @@ function updateActiveState(tabId) {
     btn.classList.toggle('active', btn.dataset.tabId === tabId);
   });
 }
-
 
 // Keyboard shortcut for reload
 document.addEventListener('keydown', (e) => {

@@ -26,6 +26,7 @@ const HistoryManager = require('./core/HistoryManager');
 const PromptLibraryManager = require('./core/PromptLibraryManager');
 const PromptImageManager = require('./core/PromptImageManager');
 const TerminalThemes = require('./core/TerminalThemes');
+const HooksManager = require('./core/HooksManager');
 
 // Set app name (shown in menu bar)
 app.setName('Cross AI Browser');
@@ -81,6 +82,7 @@ let tabManager = null;
 let viewManager = null;
 let downloadManager = null;
 let historyManager = null;
+let hooksManager = null;
 let promptLibraryManager = null;
 let promptImageManager = null;
 let servicePickerWindow = null;
@@ -117,6 +119,76 @@ function clearTabCompletion(tabId) {
   }
 }
 
+// Handle terminal hook completion events (for notifications and badges)
+function handleTerminalHookCompletion(event) {
+  const { cwd, message, type } = event;
+
+  // Find tab by cwd
+  const tabs = tabManager ? tabManager.getOrderedTabs() : [];
+  let tabId = null;
+  for (const tab of tabs) {
+    const tabData = store.get('tabData', {});
+    const data = tabData[tab.id];
+    if (data && data.cwd) {
+      const normalizedCwd = (cwd || '').replace(/\/+$/, '');
+      const normalizedTabCwd = data.cwd.replace(/\/+$/, '');
+      if (normalizedCwd === normalizedTabCwd) {
+        tabId = tab.id;
+        break;
+      }
+    }
+  }
+
+  if (!tabId) {
+    console.log('[Main] handleTerminalHookCompletion: Could not find tab for cwd', cwd);
+    return;
+  }
+
+  const tab = tabManager.getTab(tabId);
+  if (!tab) return;
+
+  // Mark tab as completed for badge (if not active)
+  markTabCompleted(tabId);
+
+  const settings = store.get('notifications');
+  if (!settings.enabled) return;
+
+  // Check notification mode
+  const shouldNotify = (() => {
+    switch (settings.mode) {
+      case 'always':
+        return true;
+      case 'unfocused':
+        return !mainWindow.isFocused();
+      case 'inactive-tab':
+        return viewManager.getActiveTabId() !== tabId;
+      default:
+        return true;
+    }
+  })();
+
+  if (!shouldNotify) return;
+
+  // Determine notification content based on hook type
+  const isNotificationHook = type === 'Notification';
+  const title = isNotificationHook ? `${tab.name} needs attention` : `${tab.name} finished`;
+  const body = sanitizeNotificationText(message) || (isNotificationHook ? 'Claude needs your input' : 'Task completed');
+
+  const notification = new Notification({
+    title: title,
+    body: body,
+    silent: false
+  });
+
+  notification.on('click', () => {
+    switchToTab(tabId);
+    mainWindow.show();
+    mainWindow.focus();
+  });
+
+  notification.show();
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -149,6 +221,24 @@ function createWindow() {
     }
   });
 
+  // Initialize HooksManager for Claude Code hooks integration
+  hooksManager = new HooksManager({ store });
+  hooksManager.initialize().then(result => {
+    if (result.success) {
+      console.log(`[Main] HooksManager started on port ${result.port}`);
+    } else {
+      console.error('[Main] Failed to start HooksManager:', result.error);
+    }
+  });
+
+  // Handle Notification hook events immediately (permission requests, etc.)
+  // Note: Stop events are handled by ViewManager after message extraction
+  hooksManager.on('hook-triggered', (event) => {
+    if (event.type === 'Notification') {
+      handleTerminalHookCompletion(event);
+    }
+  });
+
   // Initialize PromptLibraryManager
   promptLibraryManager = new PromptLibraryManager({
     store,
@@ -176,10 +266,52 @@ function createWindow() {
       mainWindow.webContents.send('tabs-updated', getTabsForRenderer());
       updateShortcuts();
     },
-    historyManager,
-    onTerminalCompleted: (tabId) => {
+    onTerminalComplete: (tabId, message) => {
+      // Handle terminal task completion notification
+      const tab = tabManager.getTab(tabId);
+      if (!tab) return;
+
+      // Mark tab as completed for badge
       markTabCompleted(tabId);
-    }
+
+      const settings = store.get('notifications');
+      if (!settings.enabled) return;
+
+      // Check notification mode
+      const shouldNotify = (() => {
+        switch (settings.mode) {
+          case 'always':
+            return true;
+          case 'unfocused':
+            return !mainWindow.isFocused();
+          case 'inactive-tab':
+            return viewManager.getActiveTabId() !== tabId;
+          default:
+            return true;
+        }
+      })();
+
+      if (!shouldNotify) return;
+
+      const title = `${tab.name} finished`;
+      const body = sanitizeNotificationText(message) || 'Task completed';
+
+      const notification = new Notification({
+        title: title,
+        body: body,
+        silent: false
+      });
+
+      notification.on('click', () => {
+        switchToTab(tabId);
+        mainWindow.show();
+        mainWindow.focus();
+      });
+
+      notification.show();
+    },
+    historyManager,
+    hooksManager
   });
 
   // Initialize DownloadManager with shared session
@@ -223,6 +355,10 @@ function createWindow() {
     if (historyManager) {
       historyManager.destroy();
       historyManager = null;
+    }
+    if (hooksManager) {
+      hooksManager.destroy();
+      hooksManager = null;
     }
     mainWindow = null;
   });

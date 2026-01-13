@@ -8,7 +8,7 @@
  * - Session sharing for web services of the same type
  */
 
-const { BrowserView, dialog, Notification, shell } = require('electron');
+const { BrowserView, dialog, shell } = require('electron');
 const path = require('path');
 const os = require('os');
 const { execFile } = require('child_process');
@@ -57,79 +57,6 @@ try {
 
 const DEFAULT_SIDEBAR_WIDTH = 160;
 
-/**
- * Sanitize text for use in notifications
- * Removes HTML tags, control characters, and normalizes whitespace
- */
-function sanitizeNotificationText(text) {
-  if (!text || typeof text !== 'string') {
-    return '';
-  }
-
-  return text
-    // Remove HTML tags
-    .replace(/<[^>]*>/g, '')
-    // Remove control characters (except newline/space)
-    .replace(/[\x00-\x09\x0b\x0c\x0e-\x1f\x7f]/g, '')
-    // Normalize whitespace
-    .replace(/\s+/g, ' ')
-    // Trim
-    .trim()
-    // Limit length
-    .slice(0, 200);
-}
-
-// Patterns that indicate Claude Code is actively working
-// These should ONLY match content that appears while Claude is actively processing
-const CLAUDE_WORKING_PATTERNS = [
-  /Esc to interrupt/i,
-  /escape to interrupt/i,
-  // Spinner characters used by Claude Code (braille spinners)
-  /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/,
-  // Active work indicator (✽ appears when Claude is processing)
-  /✽/,
-];
-
-// Check if Claude is currently working
-// Check recent output for working indicators
-function isClaudeWorking(text, debug = false) {
-  // Check the last 800 chars to handle longer output like to-do lists
-  // but not so much that we match old content
-  const recentText = text.slice(-800);
-
-  if (debug) {
-    // Always log pattern check results when debugging
-    const results = CLAUDE_WORKING_PATTERNS.map(p => ({
-      pattern: p.toString(),
-      matches: p.test(recentText)
-    }));
-    const hasEscText = recentText.toLowerCase().includes('esc to interrupt');
-    console.log('[ViewManager] Pattern check:', {
-      hasEscText,
-      textLen: recentText.length,
-      last100: recentText.slice(-100),
-      results
-    });
-  }
-
-  for (const pattern of CLAUDE_WORKING_PATTERNS) {
-    if (pattern.test(recentText)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-// Patterns that indicate Claude Code is ready for user input
-const CLAUDE_PROMPT_PATTERNS = [
-  />\s*$/,
-  /\?\s*$/,
-  /\[Y\/n\]\s*$/i,
-  /\[y\/N\]\s*$/i,
-  /\(y\/n\)\s*$/i,
-  /Press Enter/i,
-  /Claude Code/i,  // The prompt line
-];
 
 class ViewManager {
   /**
@@ -138,16 +65,18 @@ class ViewManager {
    * @param {Object} options.store - electron-store instance
    * @param {Function} options.getSidebarWidth - Function to get current sidebar width
    * @param {Function} options.onTabsChanged - Callback when tabs change
+   * @param {Function} options.onTerminalComplete - Callback when terminal task completes (tabId, message)
    * @param {HistoryManager} options.historyManager - Optional history manager for session recording
-   * @param {Function} options.onTerminalCompleted - Callback when terminal task completes
+   * @param {HooksManager} options.hooksManager - Optional hooks manager for Claude Code hooks
    */
-  constructor({ mainWindow, store, getSidebarWidth, onTabsChanged, historyManager, onTerminalCompleted }) {
+  constructor({ mainWindow, store, getSidebarWidth, onTabsChanged, onTerminalComplete, historyManager, hooksManager }) {
     this.mainWindow = mainWindow;
     this.store = store;
     this.getSidebarWidth = getSidebarWidth || (() => DEFAULT_SIDEBAR_WIDTH);
     this.onTabsChanged = onTabsChanged;
+    this.onTerminalComplete = onTerminalComplete;
     this.historyManager = historyManager;
-    this.onTerminalCompleted = onTerminalCompleted;
+    this.hooksManager = hooksManager;
 
     // View storage
     this.webViews = new Map();      // tabId -> BrowserView
@@ -158,7 +87,6 @@ class ViewManager {
     this.terminalReadyState = new Map();
     this.terminalOutputBuffer = new Map();
     this.terminalPromptState = new Map();
-    this.promptCheckTimers = new Map();
 
     // History session tracking: tabId -> sessionId
     this.terminalSessions = new Map();
@@ -174,6 +102,209 @@ class ViewManager {
 
     // Active tab tracking
     this.activeTabId = null;
+
+    // Hooks installation tracking
+    this.hooksInstallAttempted = false;
+
+    // Set up hooks event handlers
+    this._setupHooksHandlers();
+  }
+
+  /**
+   * Set up event handlers for Claude Code hooks
+   * @private
+   */
+  _setupHooksHandlers() {
+    if (!this.hooksManager) return;
+
+    this.hooksManager.on('hook-triggered', (event) => {
+      this._handleHookEvent(event);
+    });
+  }
+
+  /**
+   * Handle a hook event from Claude Code
+   * @private
+   */
+  _handleHookEvent(event) {
+    const { type, cwd, prompt, message } = event;
+
+    // Find the tab ID for this cwd
+    const tabId = this._getTabIdForCwd(cwd);
+    if (!tabId) {
+      console.warn('[ViewManager] Hook event for unknown cwd:', cwd);
+      return;
+    }
+
+    switch (type) {
+      case 'UserPromptSubmit':
+        // Claude started working
+        this._sendStreamingState(tabId, true, this._extractTaskDescription(prompt));
+        break;
+
+      case 'Stop':
+        // Claude finished working
+        this._sendStreamingState(tabId, false, null);
+        // Delay slightly to allow final PTY output to arrive before extracting message
+        setTimeout(() => {
+          const completionMessage = this._extractCompletionMessage(tabId);
+          this._sendCompletionEvent(tabId, completionMessage);
+          // Notify main.js for system notification
+          if (this.onTerminalComplete) {
+            this.onTerminalComplete(tabId, completionMessage);
+          }
+          // Clear the recent output buffer after extracting the message
+          const promptState = this.terminalPromptState.get(tabId);
+          if (promptState) {
+            promptState.recentOutput = '';
+          }
+        }, 300);
+        break;
+
+      case 'Notification':
+        // Claude sent a notification (e.g., permission request)
+        this._sendCompletionEvent(tabId, message || 'Claude needs attention');
+        break;
+    }
+  }
+
+  /**
+   * Find tab ID by working directory
+   * @private
+   */
+  _getTabIdForCwd(cwd) {
+    if (!cwd) return null;
+
+    // Normalize the cwd path for comparison
+    const normalizedCwd = cwd.replace(/\/+$/, ''); // Remove trailing slashes
+
+    for (const [tabId] of this.terminalViews) {
+      const tabCwd = this.store.get(`tabData.${tabId}.cwd`);
+      if (tabCwd) {
+        const normalizedTabCwd = tabCwd.replace(/\/+$/, '');
+        if (normalizedCwd === normalizedTabCwd) {
+          return tabId;
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Extract task description from prompt (first 50 chars)
+   * @private
+   */
+  _extractTaskDescription(prompt, maxLength = 50) {
+    if (!prompt) return null;
+    const cleaned = prompt.trim().replace(/\s+/g, ' ');
+    return cleaned.length > maxLength
+      ? cleaned.substring(0, maxLength) + '...'
+      : cleaned;
+  }
+
+  /**
+   * Extract completion message from recent terminal output
+   * Looks for text after the last ● (black circle) bullet character
+   * @private
+   */
+  _extractCompletionMessage(tabId) {
+    const promptState = this.terminalPromptState.get(tabId);
+    if (!promptState || !promptState.recentOutput) {
+      console.log('[ViewManager] No recent output for tab', tabId);
+      return 'Task completed';
+    }
+
+    const rawOutput = promptState.recentOutput;
+
+    // Search for white-colored ⏺ in raw output: \x1b[38;2;255;255;255m⏺
+    // This is the specific pattern Claude Code uses for completion messages
+    const whiteDotPattern = '\x1b[38;2;255;255;255m⏺';
+    let lastDotIndex = rawOutput.lastIndexOf(whiteDotPattern);
+    console.log('[ViewManager] White dot index:', lastDotIndex);
+
+    if (lastDotIndex === -1) {
+      // Fallback: search in cleaned output
+      const cleanOutput = rawOutput.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+      lastDotIndex = cleanOutput.lastIndexOf('⏺');
+      if (lastDotIndex === -1) {
+        return 'Task completed';
+      }
+      let message = cleanOutput.slice(lastDotIndex + 1).trim();
+      const newlineIndex = message.indexOf('\n');
+      if (newlineIndex !== -1) {
+        message = message.slice(0, newlineIndex).trim();
+      }
+      message = message.replace(/\s+/g, ' ').trim();
+      if (message.length > 100) {
+        message = message.slice(0, 100) + '...';
+      }
+      return message || 'Task completed';
+    }
+
+    // Extract text after the white dot pattern, strip ANSI codes from the result
+    let message = rawOutput.slice(lastDotIndex + whiteDotPattern.length);
+    // Strip ANSI codes and take first line
+    message = message.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').trim();
+
+    // Take just the first line
+    const newlineIndex = message.indexOf('\n');
+    if (newlineIndex !== -1) {
+      message = message.slice(0, newlineIndex).trim();
+    }
+
+    // Clean up and limit length
+    message = message.replace(/\s+/g, ' ').trim();
+    if (message.length > 100) {
+      message = message.slice(0, 100) + '...';
+    }
+
+    return message || 'Task completed';
+  }
+
+  /**
+   * Send streaming state to sidebar
+   * @private
+   */
+  _sendStreamingState(tabId, isStreaming, taskDescription) {
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.webContents.send('streaming-state-changed', {
+        tabId,
+        isStreaming,
+        taskDescription
+      });
+    }
+  }
+
+  /**
+   * Send completion event (for badge and notification)
+   * @private
+   */
+  _sendCompletionEvent(tabId, preview) {
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      // Use existing ai-response-complete channel which handles badges and notifications
+      this.mainWindow.webContents.send('terminal-response-complete', {
+        tabId,
+        preview
+      });
+    }
+  }
+
+  /**
+   * Ensure hooks are installed (called on first terminal spawn)
+   * @private
+   */
+  async _ensureHooksInstalled() {
+    if (this.hooksInstallAttempted || !this.hooksManager) return;
+
+    this.hooksInstallAttempted = true;
+
+    const isInstalled = await this.hooksManager.isInstalled();
+    if (!isInstalled) {
+      const result = await this.hooksManager.installHooks();
+      if (!result.success) {
+        console.warn('[ViewManager] Failed to install hooks:', result.error);
+      }
+    }
   }
 
   /**
@@ -313,24 +444,9 @@ class ViewManager {
     this.terminalPromptState.set(tab.id, {
       recentOutput: '',
       lastActivity: Date.now(),
-      hasNotifiedSinceLastInput: false,
-      wasWorking: false,
-      lastMessage: '',
       cols: 80,
-      rows: 30,
-      startupGracePeriod: true,  // Suppress notifications during initial load
-      hasHadUserInput: false,    // Track if user has sent any input
-      stoppedDebounceTimer: null // Debounce timer for "stopped working" detection
+      rows: 30
     });
-
-    // End startup grace period after 5 seconds
-    setTimeout(() => {
-      const state = this.terminalPromptState.get(tab.id);
-      if (state && state.startupGracePeriod) {
-        console.log(`[ViewManager] Ending startup grace period for tab ${tab.id}`);
-        state.startupGracePeriod = false;
-      }
-    }, 5000);
 
     // Load terminal HTML
     const terminalHtmlPath = path.join(__dirname, '..', 'renderer', 'terminal.html');
@@ -402,6 +518,9 @@ class ViewManager {
 
       this.terminalPtys.set(tabId, ptyProcess);
 
+      // Ensure Claude Code hooks are installed (on first terminal spawn)
+      this._ensureHooksInstalled();
+
       // Start history recording if enabled
       if (this.historyManager) {
         const sessionId = this.historyManager.startSession(tabId, cwd, { mode });
@@ -451,44 +570,16 @@ class ViewManager {
       this.terminalOutputBuffer.set(tabId, buffer);
     }
 
-    // Track output for prompt detection
+    // Track output for usage updates and completion message extraction
     const promptState = this.terminalPromptState.get(tabId);
     if (promptState) {
-      // Comprehensive ANSI/terminal escape sequence stripping
-      const cleanData = data
-        // CSI sequences: \x1b[...
-        .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')
-        // OSC sequences: \x1b]...\x07 or \x1b]...\x1b\\
-        .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
-        // Single character escapes
-        .replace(/\x1b[78DMEcn]/g, '')
-        // Two character escapes
-        .replace(/\x1b[()][AB012]/g, '')
-        // Control characters (except newline/carriage return)
-        .replace(/[\x00-\x09\x0b\x0c\x0e-\x1a\x1c-\x1f]/g, '');
-      promptState.recentOutput += cleanData;
-      if (promptState.recentOutput.length > 3000) {
-        promptState.recentOutput = promptState.recentOutput.slice(-3000);
-      }
       promptState.lastActivity = Date.now();
-
-      // Capture Claude's message
-      const markers = ['⏺', '●', '◉'];
-      for (const marker of markers) {
-        const markerIdx = cleanData.lastIndexOf(marker);
-        if (markerIdx !== -1) {
-          const afterMarker = cleanData.slice(markerIdx + 1);
-          const lineEnd = afterMarker.search(/[\n\r]/);
-          const message = lineEnd !== -1 ? afterMarker.slice(0, lineEnd) : afterMarker;
-          const trimmed = message.trim();
-          if (trimmed && trimmed.length > 5) {
-            promptState.lastMessage = trimmed;
-          }
-          break;
-        }
+      // Keep a sliding window of recent output for extracting completion messages
+      promptState.recentOutput = (promptState.recentOutput || '') + data;
+      // Limit to last 4KB to avoid memory issues
+      if (promptState.recentOutput.length > 4096) {
+        promptState.recentOutput = promptState.recentOutput.slice(-4096);
       }
-
-      this._checkForPromptAndNotify(tabId);
       this._triggerUsageUpdate(tabId);
     }
   }
@@ -554,167 +645,6 @@ class ViewManager {
       buffer.push(message);
       this.terminalOutputBuffer.set(tabId, buffer);
     }
-  }
-
-  /**
-   * Check for prompt and send notification
-   * @private
-   */
-  _checkForPromptAndNotify(tabId) {
-    const promptState = this.terminalPromptState.get(tabId);
-    if (!promptState) return;
-
-    // Debug: Log working state checks periodically
-    const shouldDebug = !promptState.lastDebugLog || Date.now() - promptState.lastDebugLog > 5000;
-    const isCurrentlyWorking = isClaudeWorking(promptState.recentOutput, shouldDebug);
-
-    if (shouldDebug) {
-      const recentSnippet = promptState.recentOutput.slice(-300).replace(/\n/g, '\\n');
-      console.log('[ViewManager] Working check:', {
-        tabId,
-        isCurrentlyWorking,
-        wasWorking: promptState.wasWorking,
-        recentOutputLen: promptState.recentOutput.length,
-        snippet: recentSnippet
-      });
-      promptState.lastDebugLog = Date.now();
-    }
-
-    // Track when streaming state changes for terminal (with debouncing)
-    if (isCurrentlyWorking) {
-      // Clear any pending "stopped" timer whenever we detect working state
-      if (promptState.stoppedDebounceTimer) {
-        clearTimeout(promptState.stoppedDebounceTimer);
-        promptState.stoppedDebounceTimer = null;
-      }
-      // Only log and send state change when transitioning from not-working to working
-      if (!promptState.wasWorking) {
-        console.log('[ViewManager] Claude started working, tab:', tabId);
-        promptState.wasWorking = true;
-        this._sendTerminalStreamingState(tabId, true, promptState.lastMessage);
-      }
-    } else if (!isCurrentlyWorking && promptState.wasWorking) {
-      // Stopped working - debounce to avoid rapid oscillation
-      if (!promptState.stoppedDebounceTimer) {
-        promptState.stoppedDebounceTimer = setTimeout(() => {
-          promptState.stoppedDebounceTimer = null;
-          // Re-check if still not working
-          if (!isClaudeWorking(promptState.recentOutput)) {
-            console.log('[ViewManager] Claude stopped working (confirmed), tab:', tabId);
-            promptState.wasWorking = false;
-            this._sendTerminalStreamingState(tabId, false, null);
-          }
-        }, 1500); // Wait 1500ms before confirming "stopped"
-      }
-    }
-
-    if (isCurrentlyWorking) {
-      if (this.promptCheckTimers.has(tabId)) {
-        clearTimeout(this.promptCheckTimers.get(tabId));
-        this.promptCheckTimers.delete(tabId);
-      }
-      return;
-    }
-
-    if (this.promptCheckTimers.has(tabId)) {
-      clearTimeout(this.promptCheckTimers.get(tabId));
-    }
-
-    const timer = setTimeout(() => {
-      if (promptState.hasNotifiedSinceLastInput) {
-        console.log('[ViewManager] Skipping notification - already notified since last input');
-        return;
-      }
-
-      const recentLines = promptState.recentOutput.split('\n').slice(-5).join('\n');
-      const isPromptReady = CLAUDE_PROMPT_PATTERNS.some(pattern => pattern.test(recentLines));
-      const claudeFinishedWorking = promptState.wasWorking && !isCurrentlyWorking;
-
-      console.log('[ViewManager] Notification check:', {
-        tabId,
-        wasWorking: promptState.wasWorking,
-        isCurrentlyWorking,
-        claudeFinishedWorking,
-        isPromptReady,
-        recentLinesPreview: recentLines.slice(-100)
-      });
-
-      if (claudeFinishedWorking || isPromptReady) {
-        console.log('[ViewManager] Sending notification for tab:', tabId);
-        promptState.hasNotifiedSinceLastInput = true;
-        promptState.wasWorking = false;
-        this._sendTerminalNotification(tabId, recentLines);
-      }
-    }, 200);  // Reduced from 500ms for faster detection
-
-    this.promptCheckTimers.set(tabId, timer);
-  }
-
-  /**
-   * Send terminal streaming state to main window
-   * @private
-   */
-  _sendTerminalStreamingState(tabId, isStreaming, taskDescription) {
-    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-      this.mainWindow.webContents.send('streaming-state-changed', {
-        tabId,
-        isStreaming,
-        taskDescription: taskDescription || (isStreaming ? 'Working...' : null)
-      });
-    }
-  }
-
-  /**
-   * Send terminal notification
-   * @private
-   */
-  _sendTerminalNotification(tabId, recentOutput) {
-    // Check if we're in startup grace period (suppress false notifications on initial load)
-    const promptState = this.terminalPromptState.get(tabId);
-    if (promptState?.startupGracePeriod && !promptState?.hasHadUserInput) {
-      console.log('[ViewManager] Suppressing notification - startup grace period, no user input yet');
-      return;
-    }
-
-    // Always notify parent of completion (for badge)
-    if (this.onTerminalCompleted) {
-      this.onTerminalCompleted(tabId);
-    }
-
-    const settings = this.store.get('notifications');
-    if (!settings?.enabled) return;
-
-    // Check notification mode
-    const shouldNotify = (() => {
-      switch (settings.mode) {
-        case 'always':
-          return true;
-        case 'unfocused':
-          return !this.mainWindow.isFocused();
-        case 'inactive-tab':
-          return this.activeTabId !== tabId;
-        default:
-          return true;
-      }
-    })();
-
-    if (!shouldNotify) return;
-
-    let preview = sanitizeNotificationText(promptState?.lastMessage) || 'Ready for input';
-
-    const notification = new Notification({
-      title: 'Claude Code',
-      body: preview,
-      silent: false
-    });
-
-    notification.on('click', () => {
-      this.switchToTab(tabId);
-      this.mainWindow.show();
-      this.mainWindow.focus();
-    });
-
-    notification.show();
   }
 
   /**
@@ -928,21 +858,6 @@ class ViewManager {
     const ptyProcess = this.terminalPtys.get(tabId);
     if (ptyProcess) {
       ptyProcess.write(data);
-
-      const promptState = this.terminalPromptState.get(tabId);
-      if (promptState) {
-        // Mark that user has sent input - enables notifications after startup
-        promptState.hasHadUserInput = true;
-        promptState.startupGracePeriod = false;
-
-        // Reset notification state on Enter
-        if (data.includes('\r') || data.includes('\n')) {
-          promptState.hasNotifiedSinceLastInput = false;
-          promptState.wasWorking = false;
-          promptState.recentOutput = '';
-          promptState.lastMessage = '';
-        }
-      }
     }
   }
 
@@ -1133,6 +1048,21 @@ class ViewManager {
   }
 
   /**
+   * Broadcast a message to all terminal views that have a specific cwd
+   * @param {string} cwd - The working directory to match
+   * @param {string} channel - The IPC channel name
+   * @param {Object} data - Data to send
+   */
+  broadcastToTerminalsWithCwd(cwd, channel, data) {
+    for (const [tabId, view] of this.terminalViews) {
+      const tabCwd = this.store.get(`tabData.${tabId}.cwd`);
+      if (tabCwd === cwd && !view.webContents.isDestroyed()) {
+        view.webContents.send(channel, data);
+      }
+    }
+  }
+
+  /**
    * Destroy a tab's view and cleanup resources
    * @param {string} tabId - The tab ID
    */
@@ -1180,18 +1110,7 @@ class ViewManager {
     // Cleanup terminal state
     this.terminalReadyState.delete(tabId);
     this.terminalOutputBuffer.delete(tabId);
-
-    // Clear debounce timer before deleting state
-    const promptState = this.terminalPromptState.get(tabId);
-    if (promptState?.stoppedDebounceTimer) {
-      clearTimeout(promptState.stoppedDebounceTimer);
-    }
     this.terminalPromptState.delete(tabId);
-
-    if (this.promptCheckTimers.has(tabId)) {
-      clearTimeout(this.promptCheckTimers.get(tabId));
-      this.promptCheckTimers.delete(tabId);
-    }
 
     if (this.usageUpdateTimers.has(tabId)) {
       clearTimeout(this.usageUpdateTimers.get(tabId));
@@ -1290,9 +1209,6 @@ class ViewManager {
     }
 
     // Clear all timers
-    for (const timer of this.promptCheckTimers.values()) {
-      clearTimeout(timer);
-    }
     for (const timer of this.usageUpdateTimers.values()) {
       clearTimeout(timer);
     }
@@ -1303,7 +1219,6 @@ class ViewManager {
     this.terminalReadyState.clear();
     this.terminalOutputBuffer.clear();
     this.terminalPromptState.clear();
-    this.promptCheckTimers.clear();
     this.usageUpdateTimers.clear();
   }
 

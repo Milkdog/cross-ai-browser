@@ -1,5 +1,13 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+// Store listener references for cleanup (prevents memory leaks)
+let activeServiceListener = null;
+let tabsUpdatedListener = null;
+let downloadsUpdatedListener = null;
+let historyUpdatedListener = null;
+let completionBadgesListener = null;
+let streamingStateListener = null;
+
 contextBridge.exposeInMainWorld('electronAPI', {
   // Service/Tab management
   getServices: () => ipcRenderer.invoke('get-services'),
@@ -58,28 +66,102 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Completion badges
   getCompletionBadges: () => ipcRenderer.invoke('get-completion-badges'),
 
-  // Event listeners
+  // Event listeners - with proper cleanup to prevent memory leaks
   onActiveServiceChanged: (callback) => {
-    ipcRenderer.on('active-service-changed', (event, tabId) => callback(tabId));
+    if (activeServiceListener) {
+      ipcRenderer.removeListener('active-service-changed', activeServiceListener);
+    }
+    activeServiceListener = (event, tabId) => callback(tabId);
+    ipcRenderer.on('active-service-changed', activeServiceListener);
   },
 
   onTabsUpdated: (callback) => {
-    ipcRenderer.on('tabs-updated', (event, tabs) => callback(tabs));
+    if (tabsUpdatedListener) {
+      ipcRenderer.removeListener('tabs-updated', tabsUpdatedListener);
+    }
+    tabsUpdatedListener = (event, tabs) => callback(tabs);
+    ipcRenderer.on('tabs-updated', tabsUpdatedListener);
   },
 
   onDownloadsUpdated: (callback) => {
-    ipcRenderer.on('downloads-updated', (event, data) => callback(data));
+    if (downloadsUpdatedListener) {
+      ipcRenderer.removeListener('downloads-updated', downloadsUpdatedListener);
+    }
+    downloadsUpdatedListener = (event, data) => callback(data);
+    ipcRenderer.on('downloads-updated', downloadsUpdatedListener);
   },
 
   onHistoryUpdated: (callback) => {
-    ipcRenderer.on('history-updated', (event, data) => callback(data));
+    if (historyUpdatedListener) {
+      ipcRenderer.removeListener('history-updated', historyUpdatedListener);
+    }
+    historyUpdatedListener = (event, data) => callback(data);
+    ipcRenderer.on('history-updated', historyUpdatedListener);
   },
 
   onCompletionBadgesUpdated: (callback) => {
-    ipcRenderer.on('completion-badges-updated', (event, tabIds) => callback(tabIds));
+    if (completionBadgesListener) {
+      ipcRenderer.removeListener('completion-badges-updated', completionBadgesListener);
+    }
+    completionBadgesListener = (event, tabIds) => callback(tabIds);
+    ipcRenderer.on('completion-badges-updated', completionBadgesListener);
   },
 
   onStreamingStateChanged: (callback) => {
-    ipcRenderer.on('streaming-state-changed', (event, data) => callback(data));
+    if (streamingStateListener) {
+      ipcRenderer.removeListener('streaming-state-changed', streamingStateListener);
+    }
+    streamingStateListener = (event, data) => callback(data);
+    ipcRenderer.on('streaming-state-changed', streamingStateListener);
+  },
+
+  // Cleanup method for manual cleanup if needed
+  cleanup: () => {
+    if (activeServiceListener) {
+      ipcRenderer.removeListener('active-service-changed', activeServiceListener);
+      activeServiceListener = null;
+    }
+    if (tabsUpdatedListener) {
+      ipcRenderer.removeListener('tabs-updated', tabsUpdatedListener);
+      tabsUpdatedListener = null;
+    }
+    if (downloadsUpdatedListener) {
+      ipcRenderer.removeListener('downloads-updated', downloadsUpdatedListener);
+      downloadsUpdatedListener = null;
+    }
+    if (historyUpdatedListener) {
+      ipcRenderer.removeListener('history-updated', historyUpdatedListener);
+      historyUpdatedListener = null;
+    }
+    if (completionBadgesListener) {
+      ipcRenderer.removeListener('completion-badges-updated', completionBadgesListener);
+      completionBadgesListener = null;
+    }
+    if (streamingStateListener) {
+      ipcRenderer.removeListener('streaming-state-changed', streamingStateListener);
+      streamingStateListener = null;
+    }
+  }
+});
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', () => {
+  if (activeServiceListener) {
+    ipcRenderer.removeListener('active-service-changed', activeServiceListener);
+  }
+  if (tabsUpdatedListener) {
+    ipcRenderer.removeListener('tabs-updated', tabsUpdatedListener);
+  }
+  if (downloadsUpdatedListener) {
+    ipcRenderer.removeListener('downloads-updated', downloadsUpdatedListener);
+  }
+  if (historyUpdatedListener) {
+    ipcRenderer.removeListener('history-updated', historyUpdatedListener);
+  }
+  if (completionBadgesListener) {
+    ipcRenderer.removeListener('completion-badges-updated', completionBadgesListener);
+  }
+  if (streamingStateListener) {
+    ipcRenderer.removeListener('streaming-state-changed', streamingStateListener);
   }
 });

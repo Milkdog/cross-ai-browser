@@ -1,11 +1,30 @@
 const { ipcRenderer } = require('electron');
 
 // Detect which AI service we're on based on URL
+// Uses strict hostname matching to prevent subdomain spoofing attacks
 function getServiceId() {
   const host = window.location.hostname;
-  if (host.includes('chat.openai.com') || host.includes('chatgpt.com')) return 'chatgpt';
-  if (host.includes('claude.ai')) return 'claude';
-  if (host.includes('gemini.google.com')) return 'gemini';
+
+  // Service map with allowed hostnames
+  const serviceMap = [
+    { hosts: ['chat.openai.com', 'chatgpt.com'], id: 'chatgpt' },
+    { hosts: ['claude.ai'], id: 'claude' },
+    { hosts: ['gemini.google.com'], id: 'gemini' }
+  ];
+
+  for (const service of serviceMap) {
+    for (const allowedHost of service.hosts) {
+      // Exact match
+      if (host === allowedHost) {
+        return service.id;
+      }
+      // Valid subdomain match (e.g., www.claude.ai)
+      if (host.endsWith('.' + allowedHost)) {
+        return service.id;
+      }
+    }
+  }
+
   return null;
 }
 

@@ -1216,6 +1216,18 @@ ipcMain.handle('prompt-library-mark-done', async (event, { terminalId, promptId 
   }
 });
 
+ipcMain.handle('prompt-library-mark-testing', async (event, { terminalId, promptId }) => {
+  if (!promptLibraryManager) return null;
+  const cwd = store.get(`tabData.${terminalId}.cwd`);
+  if (!cwd) return null;
+  try {
+    return await promptLibraryManager.markAsTesting(cwd, promptId);
+  } catch (err) {
+    console.error('Failed to mark prompt testing:', err);
+    return null;
+  }
+});
+
 ipcMain.handle('prompt-library-restore', async (event, { terminalId, promptId }) => {
   if (!promptLibraryManager) return null;
   const cwd = store.get(`tabData.${terminalId}.cwd`);

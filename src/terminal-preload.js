@@ -123,10 +123,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Toggle favorite flag on a prompt
     toggleFavorite: (promptId) => ipcRenderer.invoke('prompt-library-toggle-favorite', { terminalId, promptId }),
 
+    // Mark a prompt as testing
+    markAsTesting: (promptId) => ipcRenderer.invoke('prompt-library-mark-testing', { terminalId, promptId }),
+
     // Mark a prompt as done
     markAsDone: (promptId) => ipcRenderer.invoke('prompt-library-mark-done', { terminalId, promptId }),
 
-    // Restore a prompt from done
+    // Restore a prompt from done or testing
     restorePrompt: (promptId) => ipcRenderer.invoke('prompt-library-restore', { terminalId, promptId }),
 
     // Clear all done prompts

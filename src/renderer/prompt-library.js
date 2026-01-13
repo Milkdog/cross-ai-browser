@@ -24,8 +24,10 @@ class PromptLibrary {
     this.draggedPromptId = null;
     this.isResizing = false;
     this.doneCollapsed = false;
+    this.testingCollapsed = false;
     this.favoritesCollapsed = false;
     this.searchQuery = '';
+    this.testingTimerInterval = null;
 
     // DOM elements (set after init)
     this.panel = null;
@@ -326,9 +328,9 @@ class PromptLibrary {
       if (prompt) {
         await this.insertPromptAsInput(prompt);
 
-        // Mark as done if not reusable
-        if (!prompt.reusable && !prompt.done) {
-          await this.markPromptDone(prompt.id);
+        // Mark as testing if not reusable and not already testing/done
+        if (!prompt.reusable && !prompt.done && !prompt.testing) {
+          await this.markPromptTesting(prompt.id);
         }
       }
 
@@ -380,7 +382,21 @@ class PromptLibrary {
   }
 
   /**
-   * Mark a prompt as done
+   * Mark a prompt as testing
+   */
+  async markPromptTesting(promptId) {
+    try {
+      if (window.electronAPI?.promptLibrary?.markAsTesting) {
+        await window.electronAPI.promptLibrary.markAsTesting(promptId);
+        await this.loadPrompts();
+      }
+    } catch (err) {
+      console.error('Failed to mark prompt testing:', err);
+    }
+  }
+
+  /**
+   * Mark a prompt as done (from testing or active)
    */
   async markPromptDone(promptId) {
     try {
@@ -394,7 +410,7 @@ class PromptLibrary {
   }
 
   /**
-   * Restore a prompt from done
+   * Restore a prompt from done or testing
    */
   async restorePrompt(promptId) {
     try {
@@ -586,10 +602,33 @@ class PromptLibrary {
   }
 
   /**
+   * Format elapsed time in human-readable format
+   * @param {number} startTime - Timestamp when testing started
+   * @returns {string} Formatted time like "1h 53m" or "5m"
+   */
+  formatElapsedTime(startTime) {
+    const elapsed = Date.now() - startTime;
+    const minutes = Math.floor(elapsed / 60000);
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+
+    if (hours > 0) {
+      return `${hours}h ${remainingMinutes}m`;
+    }
+    return `${minutes}m`;
+  }
+
+  /**
    * Render all prompts using safe DOM methods
    */
   renderPrompts() {
     if (!this.promptsContainer) return;
+
+    // Clear any existing timer
+    if (this.testingTimerInterval) {
+      clearInterval(this.testingTimerInterval);
+      this.testingTimerInterval = null;
+    }
 
     // Clear container
     this.promptsContainer.textContent = '';
@@ -597,11 +636,18 @@ class PromptLibrary {
     // Apply search filter
     const filteredPrompts = this.filterPrompts(this.prompts);
 
-    // Separate by status
-    const activePrompts = filteredPrompts.filter(p => !p.done);
+    // Separate by status: active (not testing, not done), testing, done
+    const activePrompts = filteredPrompts.filter(p => !p.done && !p.testing);
+    const testingPrompts = filteredPrompts.filter(p => p.testing && !p.done);
     const donePrompts = filteredPrompts.filter(p => p.done);
 
-    // Separate favorites
+    // Sort testing prompts by testingStartedAt descending (newest first)
+    testingPrompts.sort((a, b) => (b.testingStartedAt || 0) - (a.testingStartedAt || 0));
+
+    // Sort done prompts by doneAt descending (newest first)
+    donePrompts.sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
+
+    // Separate favorites from active
     const favorites = activePrompts.filter(p => p.isFavorite);
     const nonFavorites = activePrompts.filter(p => !p.isFavorite);
 
@@ -640,6 +686,12 @@ class PromptLibrary {
       this.promptsContainer.appendChild(promptEl);
     });
 
+    // Render testing section
+    if (testingPrompts.length > 0) {
+      const testingSection = this.createTestingSection(testingPrompts);
+      this.promptsContainer.appendChild(testingSection);
+    }
+
     // Render done section
     if (donePrompts.length > 0) {
       const doneSection = this.createDoneSection(donePrompts);
@@ -648,6 +700,26 @@ class PromptLibrary {
 
     // Set up prompt event listeners
     this.setupPromptEventListeners();
+
+    // Set up timer to update testing elapsed times
+    if (testingPrompts.length > 0) {
+      this.testingTimerInterval = setInterval(() => {
+        this.updateTestingTimers();
+      }, 60000); // Update every minute
+    }
+  }
+
+  /**
+   * Update all testing timer displays
+   */
+  updateTestingTimers() {
+    const timerElements = this.promptsContainer.querySelectorAll('.prompt-testing-timer');
+    timerElements.forEach(timerEl => {
+      const startTime = parseInt(timerEl.dataset.startTime, 10);
+      if (startTime) {
+        timerEl.textContent = this.formatElapsedTime(startTime);
+      }
+    });
   }
 
   /**
@@ -697,6 +769,134 @@ class PromptLibrary {
     });
 
     return section;
+  }
+
+  /**
+   * Create the Testing section
+   */
+  createTestingSection(testingPrompts) {
+    const section = document.createElement('div');
+    section.className = 'prompt-testing-section';
+
+    // Header
+    const header = document.createElement('div');
+    header.className = 'prompt-testing-header';
+
+    const toggle = document.createElement('button');
+    toggle.className = 'prompt-testing-toggle';
+    toggle.textContent = this.testingCollapsed ? '▶' : '▼';
+
+    const title = document.createElement('span');
+    title.className = 'prompt-testing-title';
+    title.textContent = `Testing (${testingPrompts.length})`;
+
+    header.appendChild(toggle);
+    header.appendChild(title);
+
+    // Cards container
+    const cardsDiv = document.createElement('div');
+    cardsDiv.className = 'prompt-testing-cards';
+    if (this.testingCollapsed) {
+      cardsDiv.style.display = 'none';
+    }
+
+    testingPrompts.forEach(prompt => {
+      const promptEl = this.createTestingPromptElement(prompt);
+      cardsDiv.appendChild(promptEl);
+    });
+
+    section.appendChild(header);
+    section.appendChild(cardsDiv);
+
+    // Toggle event
+    header.addEventListener('click', () => {
+      this.testingCollapsed = !this.testingCollapsed;
+      toggle.textContent = this.testingCollapsed ? '▶' : '▼';
+      cardsDiv.style.display = this.testingCollapsed ? 'none' : 'block';
+    });
+
+    return section;
+  }
+
+  /**
+   * Create a testing prompt element with timer and Pass/Retry buttons
+   */
+  createTestingPromptElement(prompt) {
+    const promptEl = document.createElement('div');
+    promptEl.className = 'prompt-card testing';
+    promptEl.dataset.promptId = prompt.id;
+    promptEl.draggable = true; // Allow re-dragging to test again
+
+    // Timer row at top
+    const timerRow = document.createElement('div');
+    timerRow.className = 'prompt-testing-timer-row';
+
+    const timerIcon = document.createElement('span');
+    timerIcon.className = 'prompt-testing-icon';
+    timerIcon.textContent = '⏱';
+
+    const timer = document.createElement('span');
+    timer.className = 'prompt-testing-timer';
+    timer.dataset.startTime = prompt.testingStartedAt || Date.now();
+    timer.textContent = this.formatElapsedTime(prompt.testingStartedAt || Date.now());
+
+    timerRow.appendChild(timerIcon);
+    timerRow.appendChild(timer);
+    promptEl.appendChild(timerRow);
+
+    // Title or content preview
+    if (prompt.title) {
+      const title = document.createElement('div');
+      title.className = 'prompt-card-title';
+      title.textContent = prompt.title;
+      promptEl.appendChild(title);
+
+      const content = prompt.prompt || prompt.description || '';
+      if (content) {
+        const desc = document.createElement('div');
+        desc.className = 'prompt-card-description';
+        desc.textContent = content.slice(0, 80) + (content.length > 80 ? '...' : '');
+        promptEl.appendChild(desc);
+      }
+    } else {
+      const content = prompt.prompt || prompt.description || '';
+      if (content) {
+        const desc = document.createElement('div');
+        desc.className = 'prompt-card-description prompt-card-description-only';
+        desc.textContent = content.slice(0, 120) + (content.length > 120 ? '...' : '');
+        promptEl.appendChild(desc);
+      }
+    }
+
+    // Action buttons: Pass and Retry
+    const actions = document.createElement('div');
+    actions.className = 'prompt-card-actions prompt-testing-actions';
+
+    const passBtn = document.createElement('button');
+    passBtn.className = 'prompt-card-action pass';
+    passBtn.title = 'Mark as done';
+    const checkIcon = document.createElement('span');
+    checkIcon.textContent = '✓';
+    passBtn.appendChild(checkIcon);
+    const passLabel = document.createElement('span');
+    passLabel.textContent = 'Pass';
+    passBtn.appendChild(passLabel);
+
+    const retryBtn = document.createElement('button');
+    retryBtn.className = 'prompt-card-action retry';
+    retryBtn.title = 'Return to active';
+    const retryIcon = document.createElement('span');
+    retryIcon.textContent = '↩';
+    retryBtn.appendChild(retryIcon);
+    const retryLabel = document.createElement('span');
+    retryLabel.textContent = 'Retry';
+    retryBtn.appendChild(retryLabel);
+
+    actions.appendChild(passBtn);
+    actions.appendChild(retryBtn);
+    promptEl.appendChild(actions);
+
+    return promptEl;
   }
 
   /**
@@ -923,6 +1123,7 @@ class PromptLibrary {
     prompts.forEach(promptEl => {
       const promptId = promptEl.dataset.promptId;
       const isDone = promptEl.classList.contains('done');
+      const isTesting = promptEl.classList.contains('testing');
 
       if (isDone) {
         // Done prompt listeners
@@ -941,6 +1142,48 @@ class PromptLibrary {
             this.deletePrompt(promptId);
           });
         }
+        return;
+      }
+
+      if (isTesting) {
+        // Testing prompt listeners
+        const passBtn = promptEl.querySelector('.pass');
+        if (passBtn) {
+          passBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.markPromptDone(promptId);
+          });
+        }
+
+        const retryBtn = promptEl.querySelector('.retry');
+        if (retryBtn) {
+          retryBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.restorePrompt(promptId);
+          });
+        }
+
+        // Click on card to edit
+        promptEl.addEventListener('click', (e) => {
+          if (e.target.closest('.prompt-card-actions')) return;
+          if (e.target.closest('.prompt-testing-timer-row')) return;
+          this.showEditModal(promptId);
+        });
+
+        // Drag events for testing prompts (to re-test)
+        promptEl.addEventListener('dragstart', (e) => {
+          this.draggedPromptId = promptId;
+          promptEl.classList.add('dragging');
+          e.dataTransfer.effectAllowed = 'copyMove';
+          e.dataTransfer.setData('text/plain', promptId);
+        });
+
+        promptEl.addEventListener('dragend', () => {
+          promptEl.classList.remove('dragging');
+          this.draggedPromptId = null;
+          this.terminalContainer?.classList.remove('drag-over');
+        });
+
         return;
       }
 

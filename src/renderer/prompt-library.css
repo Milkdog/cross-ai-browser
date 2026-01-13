@@ -507,6 +507,114 @@
   opacity: 1;
 }
 
+/* Testing section */
+.prompt-testing-section {
+  margin-top: 16px;
+  border-top: 1px solid #4a4a00;
+  padding-top: 8px;
+}
+
+.prompt-testing-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.prompt-testing-header:hover {
+  background: rgba(255, 200, 0, 0.1);
+  border-radius: 4px;
+}
+
+.prompt-testing-toggle {
+  background: none;
+  border: none;
+  color: rgba(255, 200, 0, 0.7);
+  font-size: 10px;
+  padding: 0;
+  cursor: pointer;
+  width: 16px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+.prompt-testing-title {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 200, 0, 0.8);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.prompt-testing-cards {
+  padding-top: 4px;
+}
+
+/* Testing card styles */
+.prompt-card.testing {
+  background: linear-gradient(135deg, #3a3500 0%, #2d2d00 100%);
+  border: 1px solid rgba(255, 200, 0, 0.3);
+}
+
+.prompt-card.testing:hover {
+  background: linear-gradient(135deg, #454000 0%, #353500 100%);
+  border-color: rgba(255, 200, 0, 0.5);
+}
+
+/* Testing timer row */
+.prompt-testing-timer-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 200, 0, 0.2);
+}
+
+.prompt-testing-icon {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+.prompt-testing-timer {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 200, 0, 0.9);
+  font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+}
+
+/* Testing action buttons */
+.prompt-testing-actions {
+  opacity: 1 !important;
+  justify-content: flex-start;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 200, 0, 0.15);
+  margin-top: 8px;
+}
+
+.prompt-card-action.pass {
+  background: rgba(34, 197, 94, 0.2);
+  color: #22c55e;
+}
+
+.prompt-card-action.pass:hover {
+  background: rgba(34, 197, 94, 0.3);
+  color: #4ade80;
+}
+
+.prompt-card-action.retry {
+  background: rgba(99, 102, 241, 0.2);
+  color: #a5b4fc;
+}
+
+.prompt-card-action.retry:hover {
+  background: rgba(99, 102, 241, 0.3);
+  color: #c7d2fe;
+}
+
 /* Drag hint for terminal drop zone */
 #terminal-container.drag-over::after {
   content: 'Drop to insert as prompt';

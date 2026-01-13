@@ -534,7 +534,51 @@ class PromptLibraryManager extends EventEmitter {
   }
 
   /**
+   * Mark a prompt as testing (moves to Testing section unless reusable)
+   * @param {string} cwd - Working directory path
+   * @param {string} promptId - Prompt ID
+   * @returns {Promise<Object>} Updated prompt
+   */
+  async markAsTesting(cwd, promptId) {
+    const existingPrompt = this.getPromptById(cwd, promptId);
+    if (!existingPrompt) {
+      throw new Error('Prompt not found');
+    }
+
+    // Don't move reusable prompts to testing
+    if (existingPrompt.reusable) {
+      return existingPrompt;
+    }
+
+    const scope = existingPrompt.scope || 'project';
+    const prompts = scope === 'global'
+      ? this.getGlobalPrompts()
+      : this.getProjectPrompts(cwd);
+
+    const prompt = prompts.find(p => p.id === promptId);
+    if (!prompt) {
+      throw new Error('Prompt not found in storage');
+    }
+
+    prompt.testing = true;
+    prompt.testingStartedAt = Date.now();
+    prompt.done = false;
+    delete prompt.doneAt;
+    prompt.updatedAt = Date.now();
+
+    if (scope === 'global') {
+      await this.storageEngine.writeGlobalPrompts(prompts);
+    } else {
+      await this.storageEngine.writePrompts(cwd, prompts);
+    }
+
+    this.emit('prompts-updated', { cwd, prompts: this.getPromptsForCwd(cwd) });
+    return prompt;
+  }
+
+  /**
    * Mark a prompt as done (moves to Done section unless reusable)
+   * Can be called from active or testing status
    * @param {string} cwd - Working directory path
    * @param {string} promptId - Prompt ID
    * @returns {Promise<Object>} Updated prompt
@@ -562,6 +606,9 @@ class PromptLibraryManager extends EventEmitter {
 
     prompt.done = true;
     prompt.doneAt = Date.now();
+    // Clear testing status
+    prompt.testing = false;
+    delete prompt.testingStartedAt;
     prompt.updatedAt = Date.now();
 
     if (scope === 'global') {
@@ -575,7 +622,7 @@ class PromptLibraryManager extends EventEmitter {
   }
 
   /**
-   * Restore a prompt from done
+   * Restore a prompt from done or testing back to active
    * @param {string} cwd - Working directory path
    * @param {string} promptId - Prompt ID
    * @returns {Promise<Object>} Updated prompt
@@ -598,6 +645,9 @@ class PromptLibraryManager extends EventEmitter {
 
     prompt.done = false;
     delete prompt.doneAt;
+    // Also clear testing status
+    prompt.testing = false;
+    delete prompt.testingStartedAt;
     prompt.updatedAt = Date.now();
 
     if (scope === 'global') {

@@ -1,7 +1,7 @@
 # Cross AI Browser - Project Context
 
 ## Overview
-An Electron app that provides a unified tabbed interface for AI chat services (ChatGPT, Claude, Gemini) and Claude Code terminal sessions. Features multi-tab support, drag-drop reordering, shared sessions, desktop notifications, and real-time streaming indicators.
+An Electron app that provides a unified tabbed interface for AI chat services (ChatGPT, Claude, Gemini) and Claude Code terminal sessions. Features multi-tab support, drag-drop reordering, shared sessions, desktop notifications, real-time streaming indicators, and a prompt library with image attachments.
 
 ## Architecture
 
@@ -20,6 +20,9 @@ An Electron app that provides a unified tabbed interface for AI chat services (C
 - `DownloadManager.js` - Manages file downloads with thumbnails and history
 - `HistoryManager.js` - Coordinates terminal session history capture and retention
 - `TerminalThemes.js` - Terminal color theme definitions
+- `PromptLibraryManager.js` - Manages prompt CRUD, ordering, favorites, labels, and scopes
+- `PromptImageManager.js` - Handles image storage, thumbnails, and clipboard operations
+- `PromptStorageEngine.js` - File I/O for prompt library with atomic writes
 
 ### History Modules (`src/core/history/`)
 - `StorageEngine.js` - File I/O abstraction, atomic writes, path hashing by cwd
@@ -31,6 +34,7 @@ An Electron app that provides a unified tabbed interface for AI chat services (C
 - `service-picker.html/js/css` - Modal for adding new tabs
 - `rename-dialog.html/js` - Modal for renaming tabs
 - `terminal.html/js/css` - xterm.js terminal for Claude Code
+- `prompt-library.js/css` - Prompt library panel UI for terminals
 - `settings.html` - Settings popup window
 - `styles.css` - Sidebar styling
 
@@ -106,6 +110,41 @@ history/
 ```
 Session metadata stored in electron-store under `history.sessions`.
 
+## Prompt Library
+A collapsible panel in Claude Code terminals for managing reusable prompts with image attachments.
+
+### Features
+- **CRUD operations** - Create, edit, duplicate, delete prompts
+- **Image attachments** - Add images via file picker, drag-drop, or clipboard paste
+- **Favorites** - Pin important prompts to a dedicated section
+- **Labels** - Tag prompts with multiple labels for organization
+- **Reusable flag** - Mark prompts that shouldn't move to Done after use
+- **Done section** - Completed prompts move here (unless reusable)
+- **Drag-drop reordering** - Reorder prompts within the panel
+- **Scopes** - Global prompts (shared across projects) vs Project prompts (per working directory)
+- **Search/filter** - Filter prompts by title, content, or labels
+
+### Image Attachment Flow
+1. Images are stored in `~/Library/Application Support/Cross AI Browser/prompt-images/`
+2. Thumbnails generated at 120px for display in the UI
+3. When dragging a prompt to terminal:
+   - Each image is copied to system clipboard
+   - Paste is triggered programmatically
+   - Claude Code detects the image and shows `[Image #N]`
+4. Prompt text is sent after all images are attached
+
+### Storage
+- Prompts stored in `~/Library/Application Support/Cross AI Browser/prompts/`
+- Global prompts: `global-prompts.json`
+- Project prompts: `<cwd-hash>.json`
+- Images: `prompt-images/<image-id>.png` with `<image-id>_thumb.png` thumbnails
+
+### UI
+- Toggle button in terminal view ("Prompts")
+- Resizable panel (200-500px width)
+- Keyboard shortcut: Cmd+Shift+P to toggle
+- Drag prompt card to terminal to insert
+
 ## Commands
 - `npm start` - Run in development
 - `npm run build` - Build distributable .app/.dmg
@@ -136,6 +175,9 @@ src/
 │   ├── DownloadManager.js     # Download management
 │   ├── HistoryManager.js      # Terminal session history coordinator
 │   ├── TerminalThemes.js      # Terminal color themes
+│   ├── PromptLibraryManager.js # Prompt CRUD and organization
+│   ├── PromptImageManager.js  # Image storage and clipboard
+│   ├── PromptStorageEngine.js # Prompt file I/O
 │   └── history/
 │       ├── StorageEngine.js   # File I/O for history
 │       ├── SessionRecorder.js # PTY output buffering
@@ -145,6 +187,7 @@ src/
     ├── service-picker.*       # Add tab modal
     ├── rename-dialog.*        # Rename tab modal
     ├── terminal.*             # Claude Code terminal
+    ├── prompt-library.*       # Prompt library panel
     ├── settings.html          # Settings popup
     └── styles.css             # Sidebar styles
 assets/
@@ -152,22 +195,22 @@ assets/
 └── icon.icns                  # macOS app icon
 ```
 
-## Known Security Issues
-The following issues were identified during security review and should be addressed:
+## Security
+The following security measures are implemented:
 
-### Critical
-1. **IPC allows arbitrary setting keys** - Add allowlist validation for `set-setting` handler
-2. **Missing navigation security** - Add `will-navigate` handlers to BrowserViews
-3. **Unsafe window open handler** - Replace substring matching with strict origin-based allowlist
+### Navigation & Window Security
+- **Navigation allowlist** - `will-navigate` handlers restrict BrowserView navigation to allowed AI service origins
+- **Strict window.open validation** - Uses hostname-based allowlist instead of substring matching
+- **Sandbox mode** - All BrowserViews have `sandbox: true` enabled
 
-### High
-4. **Missing sandbox** - Add `sandbox: true` to BrowserView webPreferences
-5. **IPC listener memory leak** - `onActiveServiceChanged` doesn't clean up listeners
-6. **Missing IPC input validation** - Validate `serviceId` against known services
+### IPC Security
+- **Setting key allowlist** - `set-setting` handler only accepts whitelisted keys
+- **Listener cleanup** - All IPC listeners in sidebar-preload.js properly remove old listeners before adding new ones
+- **Strict hostname validation** - webview-preload.js uses exact hostname matching instead of `.includes()`
 
-### Medium
-7. Add CSP to `settings.html`
-8. Sanitize notification preview text from webviews
+### Content Security
+- **CSP headers** - All HTML files have Content Security Policy meta tags
+- **Notification sanitization** - Preview text is sanitized before display (HTML/control chars removed)
 
 ## Future Plans
 - [ ] **Code signing & notarization** - Sign with Developer ID for Gatekeeper

@@ -55,6 +55,57 @@ An Electron app that provides a unified tabbed interface for AI chat services (C
 - **node-pty + xterm.js** - Native terminal for Claude Code
 - **electron-store v8** - Using v8 (not v11+) for CommonJS compatibility
 - **Custom user agent** - Strips "Electron" to avoid detection by AI services
+- **Shared design tokens** - Single source of truth for colors, spacing, typography across Electron and PWA
+
+## Design System
+
+### Architecture
+The app uses a unified design system shared between the Electron app and PWA companion.
+
+**Source of Truth:** `design-tokens.js` (root directory)
+- Defines all colors, spacing, border radii, typography, shadows, and transitions
+- Exports `generateCSSVariables()` for Electron runtime injection
+- Exports `generateTailwindTheme()` for PWA Tailwind config
+
+**Electron Integration:** `src/renderer/design-system.js`
+- Imports tokens and injects CSS variables into `:root` at runtime
+- Loaded via `<script type="module">` in each HTML file
+
+**PWA Integration:** `pwa/tailwind.config.js`
+- Imports tokens and generates Tailwind theme at build time
+
+### CSS Rules
+**IMPORTANT: Never use hardcoded colors in CSS files.**
+- All colors MUST use CSS variables from design tokens (e.g., `var(--color-bg-surface, #1f1f24)`)
+- Always include a fallback value for the variable
+- If a new color is needed, add it to `design-tokens.js` first, then reference via CSS variable
+- This ensures consistency across the app and makes theming changes easy
+
+### Token Categories
+```
+colors:
+  bg: base, surface, elevated, card, cardHover, input
+  border: subtle, default, hover, focus
+  text: primary, secondary, muted, disabled
+  primary: base, hover, active, muted, border (indigo accent)
+  status: success, warning, error, info (+ muted variants)
+  service: chatgpt, claude, gemini, claudeCode (brand colors)
+  semantic: reusable, favorite, testing, done, project
+  ready: border, borderDim, glow, glowFar, glowDim, glowDimFar (terminal ready indicator)
+spacing: 0-12 scale (4px base unit)
+radius: sm (4px), md (6px), lg (8px), xl (12px), full
+typography: fontFamily, fontSize, fontWeight, lineHeight, letterSpacing
+shadows: sm, md, lg, glow, glowReady
+transitions: fast (150ms), normal (200ms), slow (300ms)
+```
+
+### Ready Indicator
+Terminal displays a pulsing green border when awaiting user input:
+- 8px green border (`--color-ready-border`) pulses between 100% and 50% opacity
+- Strong inner glow effect for visibility from across the room
+- Activates when terminal is not streaming and user hasn't interacted
+- Dismisses on mouse movement, click, or keypress
+- Returns after 3 seconds of inactivity post-streaming
 
 ## AI Detection Logic (`webview-preload.js`)
 Each AI service has specific selectors for detecting streaming state:
@@ -186,6 +237,7 @@ https://github.com/Milkdog/cross-ai-browser
 
 ## File Structure
 ```
+design-tokens.js               # Design system source of truth (colors, spacing, etc.)
 src/
 ├── main.js                    # Electron main process
 ├── sidebar-preload.js         # Preload for sidebar window
@@ -210,6 +262,7 @@ src/
 │       ├── SessionRecorder.js # PTY output buffering
 │       └── RetentionPolicy.js # Cleanup logic
 └── renderer/
+    ├── design-system.js       # Runtime CSS variable injection
     ├── sidebar.html/js        # Sidebar with tab list, downloads, history
     ├── service-picker.*       # Add tab modal
     ├── rename-dialog.*        # Rename tab modal

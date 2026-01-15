@@ -3,7 +3,7 @@
 /* Sans-serif font for prompt panel to match app style */
 #prompt-panel,
 #prompt-panel * {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family: var(--font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
 }
 
 /* Terminal layout - split pane with terminal and prompt panel */
@@ -25,7 +25,7 @@
   background: transparent;
   cursor: col-resize;
   flex-shrink: 0;
-  transition: background 0.15s ease;
+  transition: background var(--transition-fast, 0.15s ease);
   position: relative;
 }
 
@@ -48,11 +48,11 @@
   width: 300px;
   min-width: 200px;
   max-width: 500px;
-  background: #252526;
-  border-left: 1px solid #3c3c3c;
+  background: var(--color-bg-surface, #1f1f24);
+  border-left: 1px solid var(--color-border-default, #3c3c42);
   display: flex;
   flex-direction: column;
-  transition: width 0.2s ease, opacity 0.2s ease;
+  transition: width var(--transition-normal, 0.2s ease), opacity var(--transition-normal, 0.2s ease);
   overflow: hidden;
 }
 
@@ -69,54 +69,53 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
-  background: #2d2d2d;
-  border-bottom: 1px solid #3c3c3c;
+  padding: var(--spacing-2, 8px) var(--spacing-3, 12px);
+  background: var(--color-bg-elevated, #252530);
+  border-bottom: 1px solid var(--color-border-default, #3c3c42);
   flex-shrink: 0;
 }
 
 #prompt-panel-header h3 {
   margin: 0;
-  font-size: 12px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.9);
+  font-size: var(--font-size-sm, 11px);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
 .prompt-panel-actions {
   display: flex;
-  gap: 4px;
+  gap: var(--spacing-1, 4px);
   flex-shrink: 0;
 }
 
 .prompt-panel-btn {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--color-bg-card, #2a2a32);
   border: none;
-  color: rgba(255, 255, 255, 0.8);
-  padding: 4px 10px;
-  border-radius: 4px;
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
+  padding: var(--spacing-1, 4px) 10px;
+  border-radius: var(--radius-sm, 4px);
   cursor: pointer;
   font-size: 16px;
-  font-weight: 600;
-  transition: all 0.15s ease;
+  font-weight: var(--font-weight-semibold, 600);
+  transition: all var(--transition-fast, 0.15s ease);
   line-height: 1;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
 .prompt-panel-btn:hover {
-  background: rgba(255, 255, 255, 0.2);
-  color: rgba(255, 255, 255, 1);
+  background: var(--color-bg-cardHover, #32323c);
+  color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
 }
 
 .prompt-panel-btn.add-btn {
-  background: rgba(99, 102, 241, 0.3);
-  color: #a5b4fc;
+  background: var(--color-primary-muted, rgba(99, 102, 241, 0.15));
+  color: var(--color-primary-base, #6366f1);
   font-size: 18px;
 }
 
 .prompt-panel-btn.add-btn:hover {
-  background: rgba(99, 102, 241, 0.5);
+  background: rgba(99, 102, 241, 0.3);
   color: white;
 }
 
@@ -126,30 +125,29 @@
 
 /* Search input */
 #prompt-search-container {
-  padding: 8px 12px;
-  border-bottom: 1px solid #3c3c3c;
+  padding: var(--spacing-2, 8px) var(--spacing-3, 12px);
+  border-bottom: 1px solid var(--color-border-default, #3c3c42);
   flex-shrink: 0;
 }
 
 #prompt-search-input {
   width: 100%;
-  padding: 8px 12px;
-  background: #1e1e1e;
-  border: 1px solid #444444;
-  border-radius: 4px;
-  color: rgba(255, 255, 255, 0.95);
-  font-size: 13px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  transition: border-color 0.15s ease;
+  padding: var(--spacing-2, 8px) var(--spacing-3, 12px);
+  background: var(--color-bg-input, #1e1e24);
+  border: 1px solid var(--color-border-default, #3c3c42);
+  border-radius: var(--radius-md, 6px);
+  color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
+  font-size: var(--font-size-base, 13px);
+  transition: border-color var(--transition-fast, 0.15s ease);
 }
 
 #prompt-search-input:focus {
   outline: none;
-  border-color: #6366f1;
+  border-color: var(--color-primary-base, #6366f1);
 }
 
 #prompt-search-input::placeholder {
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--color-text-disabled, rgba(255, 255, 255, 0.3));
 }
 
 /* Cards container */
@@ -183,34 +181,43 @@
   align-items: center;
   justify-content: center;
   padding: 40px 20px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--color-text-disabled, rgba(255, 255, 255, 0.3));
   text-align: center;
 }
 
 .prompt-empty-icon {
   font-size: 32px;
-  margin-bottom: 12px;
+  margin-bottom: var(--spacing-3, 12px);
   opacity: 0.5;
 }
 
 .prompt-empty-text {
-  font-size: 13px;
+  font-size: var(--font-size-base, 13px);
   line-height: 1.5;
 }
 
-/* Section styles (for favorites) */
+/* Section styles */
 .prompt-section {
-  margin-bottom: 8px;
+  margin-bottom: var(--spacing-2, 8px);
+}
+
+/* Reusable section - green accent */
+.prompt-section-reusable .prompt-section-title {
+  color: var(--color-semantic-reusable, #10b981);
+}
+
+.prompt-section-reusable .prompt-section-toggle {
+  color: var(--color-semantic-reusable, #10b981);
 }
 
 .prompt-section-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 4px;
+  gap: var(--spacing-2, 8px);
+  padding: var(--spacing-2, 8px) var(--spacing-1, 4px);
   cursor: pointer;
   user-select: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm, 4px);
 }
 
 .prompt-section-header:hover {
@@ -220,42 +227,41 @@
 .prompt-section-toggle {
   background: none;
   border: none;
-  color: rgba(255, 255, 255, 0.5);
-  font-size: 10px;
+  color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
+  font-size: var(--font-size-xs, 10px);
   padding: 0;
   cursor: pointer;
   width: 16px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
 .prompt-section-title {
   flex: 1;
-  font-size: 11px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.6);
+  font-size: var(--font-size-sm, 11px);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
 .prompt-section-cards {
-  padding-top: 4px;
+  padding-top: var(--spacing-1, 4px);
 }
 
 /* Prompt card */
 .prompt-card {
-  background: #333333;
-  border: 1px solid #444444;
-  border-radius: 6px;
-  padding: 12px;
-  margin-bottom: 8px;
+  background: var(--color-bg-card, #2a2a32);
+  border: 1px solid var(--color-border-default, #3c3c42);
+  border-radius: var(--radius-md, 6px);
+  padding: var(--spacing-3, 12px);
+  margin-bottom: var(--spacing-2, 8px);
   cursor: grab;
-  transition: all 0.15s ease;
+  transition: all var(--transition-fast, 0.15s ease);
   position: relative;
 }
 
 .prompt-card:hover {
-  background: #3a3a3a;
-  border-color: #505050;
+  background: var(--color-bg-cardHover, #32323c);
+  border-color: var(--color-border-hover, #4a4a52);
 }
 
 .prompt-card:active {
@@ -268,18 +274,75 @@
 }
 
 .prompt-card.drag-over-top {
-  margin-top: 8px;
-  box-shadow: 0 -3px 0 0 #6366f1;
+  margin-top: var(--spacing-2, 8px);
+  box-shadow: 0 -3px 0 0 var(--color-primary-base, #6366f1);
 }
 
 .prompt-card.drag-over-bottom {
-  margin-bottom: 8px;
-  box-shadow: 0 3px 0 0 #6366f1;
+  margin-bottom: var(--spacing-2, 8px);
+  box-shadow: 0 3px 0 0 var(--color-primary-base, #6366f1);
 }
 
-/* Reusable card indicator */
-.prompt-card.reusable {
-  border-left: 3px solid #10b981;
+/* Compact card style for reusable prompts */
+.prompt-card.compact {
+  padding: var(--spacing-2, 8px) var(--spacing-3, 12px);
+}
+
+/* Header row with scope icon and inline content */
+.prompt-card-header-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2, 8px);
+}
+
+/* Scope icon styling */
+.prompt-scope-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.prompt-scope-icon.global {
+  color: var(--color-semantic-reusable, #10b981);
+}
+
+.prompt-scope-icon.project {
+  color: var(--color-semantic-project, #60a5fa);
+}
+
+/* Inline content container */
+.prompt-card-inline-content {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.prompt-card-inline-title {
+  font-size: var(--font-size-base, 13px);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.prompt-card-inline-preview {
+  font-size: var(--font-size-base, 13px);
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Compact description for reusable cards with titles */
+.prompt-card-description.compact {
+  margin-top: var(--spacing-1, 4px);
+  margin-left: 22px;
+  font-size: 12px;
+  max-height: 36px;
 }
 
 /* Badges row (top of card) */
@@ -297,15 +360,15 @@
 }
 
 .prompt-badge.global {
-  color: #60a5fa;
+  color: var(--color-semantic-project, #60a5fa);
 }
 
 .prompt-badge.reusable {
-  color: #10b981;
+  color: var(--color-semantic-reusable, #10b981);
 }
 
 .prompt-badge.favorite {
-  color: #fbbf24;
+  color: var(--color-semantic-favorite, #fbbf24);
 }
 
 /* Labels on cards */
@@ -317,26 +380,26 @@
 }
 
 .prompt-card-label {
-  font-size: 10px;
-  background: rgba(99, 102, 241, 0.2);
+  font-size: var(--font-size-xs, 10px);
+  background: var(--color-primary-muted, rgba(99, 102, 241, 0.15));
   color: #a5b4fc;
   padding: 2px 6px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm, 4px);
   letter-spacing: 0.3px;
 }
 
 .prompt-card-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.95);
-  margin-bottom: 6px;
+  font-size: var(--font-size-md, 14px);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
+  margin-bottom: var(--spacing-1, 4px);
   line-height: 1.3;
   word-break: break-word;
 }
 
 .prompt-card-description {
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.6);
+  font-size: var(--font-size-base, 13px);
+  color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
   line-height: 1.5;
   max-height: 60px;
   overflow: hidden;
@@ -348,20 +411,20 @@
 /* When card has no title, show more content */
 .prompt-card-description-only {
   max-height: 100px;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
 }
 
 /* Bottom action bar */
 .prompt-card-actions {
   display: flex;
-  gap: 4px;
+  gap: var(--spacing-1, 4px);
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid var(--color-border-subtle, #333338);
   opacity: 0;
   height: 0;
   overflow: hidden;
-  transition: opacity 0.15s ease, height 0.15s ease, padding 0.15s ease, margin 0.15s ease;
+  transition: opacity var(--transition-fast, 0.15s ease), height var(--transition-fast, 0.15s ease), padding var(--transition-fast, 0.15s ease), margin var(--transition-fast, 0.15s ease);
   padding-top: 0;
   margin-top: 0;
 }
@@ -374,17 +437,17 @@
 }
 
 .prompt-card-action {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--color-bg-card, #2a2a32);
   border: none;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
   padding: 5px 10px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm, 4px);
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--font-size-sm, 11px);
   display: flex;
   align-items: center;
   gap: 5px;
-  transition: all 0.15s ease;
+  transition: all var(--transition-fast, 0.15s ease);
 }
 
 .prompt-card-action svg {
@@ -396,108 +459,108 @@
 }
 
 .prompt-card-action:hover {
-  background: rgba(255, 255, 255, 0.15);
-  color: rgba(255, 255, 255, 0.95);
+  background: var(--color-bg-cardHover, #32323c);
+  color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
 }
 
 .prompt-card-action.favorite-toggle.active {
-  color: #fbbf24;
+  color: var(--color-semantic-favorite, #fbbf24);
 }
 
 .prompt-card-action.favorite-toggle:hover {
-  background: rgba(251, 191, 36, 0.2);
-  color: #fbbf24;
+  background: var(--color-semantic-favoriteMuted, rgba(251, 191, 36, 0.15));
+  color: var(--color-semantic-favorite, #fbbf24);
 }
 
 .prompt-card-action.delete:hover {
-  background: rgba(244, 71, 71, 0.2);
-  color: #f44747;
+  background: var(--color-status-errorMuted, rgba(239, 68, 68, 0.15));
+  color: var(--color-status-error, #ef4444);
 }
 
 .prompt-card-action.restore:hover {
-  background: rgba(99, 102, 241, 0.2);
+  background: var(--color-primary-muted, rgba(99, 102, 241, 0.15));
   color: #a5b4fc;
 }
 
 /* Done section */
 .prompt-done-section {
-  margin-top: 16px;
-  border-top: 1px solid #3c3c3c;
-  padding-top: 8px;
+  margin-top: var(--spacing-4, 16px);
+  border-top: 1px solid var(--color-border-default, #3c3c42);
+  padding-top: var(--spacing-2, 8px);
 }
 
 .prompt-done-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 4px;
+  gap: var(--spacing-2, 8px);
+  padding: var(--spacing-2, 8px) var(--spacing-1, 4px);
   cursor: pointer;
   user-select: none;
 }
 
 .prompt-done-header:hover {
   background: rgba(255, 255, 255, 0.05);
-  border-radius: 4px;
+  border-radius: var(--radius-sm, 4px);
 }
 
 .prompt-done-toggle {
   background: none;
   border: none;
-  color: rgba(255, 255, 255, 0.5);
-  font-size: 10px;
+  color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
+  font-size: var(--font-size-xs, 10px);
   padding: 0;
   cursor: pointer;
   width: 16px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: var(--font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
 }
 
 .prompt-done-title {
   flex: 1;
-  font-size: 11px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.5);
+  font-size: var(--font-size-sm, 11px);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: var(--letter-spacing-wide, 0.5px);
 }
 
 .prompt-done-clear {
   background: none;
   border: none;
-  color: rgba(255, 255, 255, 0.4);
-  font-size: 11px;
+  color: var(--color-text-disabled, rgba(255, 255, 255, 0.3));
+  font-size: var(--font-size-sm, 11px);
   padding: 2px 6px;
   cursor: pointer;
-  border-radius: 3px;
-  transition: all 0.15s ease;
+  border-radius: var(--radius-sm, 4px);
+  transition: all var(--transition-fast, 0.15s ease);
 }
 
 .prompt-done-clear:hover {
-  background: rgba(244, 71, 71, 0.2);
-  color: #f44747;
+  background: var(--color-status-errorMuted, rgba(239, 68, 68, 0.15));
+  color: var(--color-status-error, #ef4444);
 }
 
 .prompt-done-cards {
-  padding-top: 4px;
+  padding-top: var(--spacing-1, 4px);
 }
 
 /* Done card styles */
 .prompt-card.done {
   opacity: 0.6;
   cursor: default;
-  background: #2a2a2a;
+  background: var(--color-bg-card, #2a2a32);
 }
 
 .prompt-card.done:hover {
-  background: #2f2f2f;
+  background: var(--color-bg-cardHover, #32323c);
 }
 
 .prompt-card.done .prompt-card-title {
   text-decoration: line-through;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
 }
 
 .prompt-card.done .prompt-card-description {
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--color-text-disabled, rgba(255, 255, 255, 0.3));
 }
 
 .prompt-card.done .prompt-card-actions {
@@ -510,58 +573,58 @@
 
 /* Testing section */
 .prompt-testing-section {
-  margin-top: 16px;
-  border-top: 1px solid #4a4a00;
-  padding-top: 8px;
+  margin-top: var(--spacing-4, 16px);
+  border-top: 1px solid var(--color-semantic-testing, #eab308);
+  padding-top: var(--spacing-2, 8px);
 }
 
 .prompt-testing-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 4px;
+  gap: var(--spacing-2, 8px);
+  padding: var(--spacing-2, 8px) var(--spacing-1, 4px);
   cursor: pointer;
   user-select: none;
 }
 
 .prompt-testing-header:hover {
-  background: rgba(255, 200, 0, 0.1);
-  border-radius: 4px;
+  background: var(--color-semantic-testingMuted, rgba(234, 179, 8, 0.15));
+  border-radius: var(--radius-sm, 4px);
 }
 
 .prompt-testing-toggle {
   background: none;
   border: none;
-  color: rgba(255, 200, 0, 0.7);
-  font-size: 10px;
+  color: var(--color-semantic-testing, #eab308);
+  font-size: var(--font-size-xs, 10px);
   padding: 0;
   cursor: pointer;
   width: 16px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: var(--font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
 }
 
 .prompt-testing-title {
   flex: 1;
-  font-size: 11px;
-  font-weight: 600;
-  color: rgba(255, 200, 0, 0.8);
+  font-size: var(--font-size-sm, 11px);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-semantic-testing, #eab308);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: var(--letter-spacing-wide, 0.5px);
 }
 
 .prompt-testing-cards {
-  padding-top: 4px;
+  padding-top: var(--spacing-1, 4px);
 }
 
 /* Testing card styles */
 .prompt-card.testing {
-  background: linear-gradient(135deg, #3a3500 0%, #2d2d00 100%);
-  border: 1px solid rgba(255, 200, 0, 0.3);
+  background: var(--color-semantic-testingBg, linear-gradient(135deg, #2a2a00 0%, #252500 100%));
+  border: 1px solid rgba(234, 179, 8, 0.3);
 }
 
 .prompt-card.testing:hover {
-  background: linear-gradient(135deg, #454000 0%, #353500 100%);
-  border-color: rgba(255, 200, 0, 0.5);
+  background: linear-gradient(135deg, #353500 0%, #2d2d00 100%);
+  border-color: rgba(234, 179, 8, 0.5);
 }
 
 /* Testing timer row */
@@ -569,20 +632,20 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-bottom: 8px;
+  margin-bottom: var(--spacing-2, 8px);
   padding-bottom: 6px;
-  border-bottom: 1px solid rgba(255, 200, 0, 0.2);
+  border-bottom: 1px solid rgba(234, 179, 8, 0.2);
 }
 
 .prompt-testing-icon {
-  font-size: 12px;
+  font-size: var(--font-size-sm, 11px);
   opacity: 0.8;
 }
 
 .prompt-testing-timer {
-  font-size: 12px;
-  font-weight: 600;
-  color: rgba(255, 200, 0, 0.9);
+  font-size: var(--font-size-sm, 11px);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-semantic-testing, #eab308);
   font-family: 'SF Mono', Monaco, 'Courier New', monospace;
 }
 
@@ -590,29 +653,29 @@
 .prompt-testing-actions {
   opacity: 1 !important;
   justify-content: flex-start;
-  gap: 8px;
-  padding-top: 8px;
-  border-top: 1px solid rgba(255, 200, 0, 0.15);
-  margin-top: 8px;
+  gap: var(--spacing-2, 8px);
+  padding-top: var(--spacing-2, 8px);
+  border-top: 1px solid rgba(234, 179, 8, 0.15);
+  margin-top: var(--spacing-2, 8px);
 }
 
 .prompt-card-action.pass {
-  background: rgba(34, 197, 94, 0.2);
-  color: #22c55e;
+  background: var(--color-status-successMuted, rgba(34, 197, 94, 0.15));
+  color: var(--color-status-success, #22c55e);
 }
 
 .prompt-card-action.pass:hover {
-  background: rgba(34, 197, 94, 0.3);
+  background: rgba(34, 197, 94, 0.25);
   color: #4ade80;
 }
 
 .prompt-card-action.retry {
-  background: rgba(99, 102, 241, 0.2);
+  background: var(--color-primary-muted, rgba(99, 102, 241, 0.15));
   color: #a5b4fc;
 }
 
 .prompt-card-action.retry:hover {
-  background: rgba(99, 102, 241, 0.3);
+  background: rgba(99, 102, 241, 0.25);
   color: #c7d2fe;
 }
 
@@ -651,46 +714,46 @@
 }
 
 .prompt-modal {
-  background: #2d2d2d;
-  border: 1px solid #444444;
-  border-radius: 8px;
+  background: var(--color-bg-elevated, #252530);
+  border: 1px solid var(--color-border-default, #3c3c42);
+  border-radius: var(--radius-lg, 8px);
   width: 700px;
   max-width: 90%;
   max-height: 90vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  box-shadow: var(--shadow-lg, 0 10px 15px rgba(0, 0, 0, 0.5));
+  font-family: var(--font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
 }
 
 .prompt-modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px;
-  border-bottom: 1px solid #3c3c3c;
+  padding: var(--spacing-4, 16px);
+  border-bottom: 1px solid var(--color-border-default, #3c3c42);
 }
 
 .prompt-modal-header h3 {
   margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.95);
+  font-size: var(--font-size-lg, 16px);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
 }
 
 .prompt-modal-close {
   background: transparent;
   border: none;
-  color: rgba(255, 255, 255, 0.5);
+  color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
   font-size: 20px;
   cursor: pointer;
-  padding: 4px;
+  padding: var(--spacing-1, 4px);
   line-height: 1;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: var(--font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
 }
 
 .prompt-modal-close:hover {
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
 }
 
 .prompt-modal-body {
@@ -783,40 +846,40 @@
 
 .prompt-form-label {
   display: block;
-  font-size: 13px;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.7);
-  margin-bottom: 6px;
+  font-size: var(--font-size-base, 13px);
+  font-weight: var(--font-weight-medium, 500);
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
+  margin-bottom: var(--spacing-1, 4px);
 }
 
 .prompt-form-hint {
   display: block;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.4);
-  margin-bottom: 6px;
+  font-size: var(--font-size-sm, 11px);
+  color: var(--color-text-disabled, rgba(255, 255, 255, 0.3));
+  margin-bottom: var(--spacing-1, 4px);
   font-style: italic;
 }
 
 .prompt-form-input {
   width: 100%;
   padding: 10px 12px;
-  background: #1e1e1e;
-  border: 1px solid #444444;
-  border-radius: 4px;
-  color: rgba(255, 255, 255, 0.95);
-  font-size: 14px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  transition: border-color 0.15s ease;
+  background: var(--color-bg-input, #1e1e24);
+  border: 1px solid var(--color-border-default, #3c3c42);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
+  font-size: var(--font-size-md, 14px);
+  font-family: var(--font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+  transition: border-color var(--transition-fast, 0.15s ease);
   box-sizing: border-box;
 }
 
 .prompt-form-input:focus {
   outline: none;
-  border-color: #6366f1;
+  border-color: var(--color-primary-base, #6366f1);
 }
 
 .prompt-form-input::placeholder {
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--color-text-disabled, rgba(255, 255, 255, 0.3));
 }
 
 .prompt-form-textarea {
@@ -846,19 +909,19 @@
 .prompt-label-tag {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  background: rgba(99, 102, 241, 0.2);
+  gap: var(--spacing-1, 4px);
+  background: var(--color-primary-muted, rgba(99, 102, 241, 0.15));
   color: #a5b4fc;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 12px;
+  padding: var(--spacing-1, 4px) var(--spacing-2, 8px);
+  border-radius: var(--radius-sm, 4px);
+  font-size: var(--font-size-sm, 11px);
 }
 
 .prompt-label-remove {
   background: none;
   border: none;
-  color: rgba(255, 255, 255, 0.5);
-  font-size: 14px;
+  color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
+  font-size: var(--font-size-md, 14px);
   cursor: pointer;
   padding: 0;
   line-height: 1;
@@ -866,27 +929,27 @@
 }
 
 .prompt-label-remove:hover {
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
 }
 
 .prompt-labels-input {
   width: 100%;
-  padding: 8px 10px;
-  background: #1e1e1e;
-  border: 1px solid #444444;
-  border-radius: 4px;
-  color: rgba(255, 255, 255, 0.95);
-  font-size: 13px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  padding: var(--spacing-2, 8px) 10px;
+  background: var(--color-bg-input, #1e1e24);
+  border: 1px solid var(--color-border-default, #3c3c42);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
+  font-size: var(--font-size-base, 13px);
+  font-family: var(--font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
 }
 
 .prompt-labels-input:focus {
   outline: none;
-  border-color: #6366f1;
+  border-color: var(--color-primary-base, #6366f1);
 }
 
 .prompt-labels-input::placeholder {
-  color: rgba(255, 255, 255, 0.3);
+  color: var(--color-text-disabled, rgba(255, 255, 255, 0.3));
 }
 
 /* Label suggestions dropdown */
@@ -895,10 +958,10 @@
   top: 100%;
   left: 0;
   right: 0;
-  background: #2d2d2d;
-  border: 1px solid #444444;
+  background: var(--color-bg-elevated, #252530);
+  border: 1px solid var(--color-border-default, #3c3c42);
   border-top: none;
-  border-radius: 0 0 4px 4px;
+  border-radius: 0 0 var(--radius-sm, 4px) var(--radius-sm, 4px);
   max-height: 150px;
   overflow-y: auto;
   z-index: 10;
@@ -910,20 +973,20 @@
 }
 
 .prompt-labels-suggestion {
-  padding: 8px 10px;
+  padding: var(--spacing-2, 8px) 10px;
   cursor: pointer;
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.9);
+  font-size: var(--font-size-base, 13px);
+  color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
 }
 
 .prompt-labels-suggestion:hover,
 .prompt-labels-suggestion.highlighted {
-  background: #3c3c3c;
+  background: var(--color-bg-card, #2a2a32);
 }
 
 .prompt-labels-suggestion .match {
-  color: #6366f1;
-  font-weight: 500;
+  color: var(--color-primary-base, #6366f1);
+  font-weight: var(--font-weight-medium, 500);
 }
 
 .prompt-labels-input-wrapper {
@@ -940,42 +1003,51 @@
 .prompt-form-checkbox {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--spacing-2, 8px);
 }
 
 .prompt-form-checkbox input[type="checkbox"] {
   width: 16px;
   height: 16px;
-  accent-color: #6366f1;
+  accent-color: var(--color-primary-base, #6366f1);
   cursor: pointer;
 }
 
 .prompt-form-checkbox label {
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.7);
+  font-size: var(--font-size-base, 13px);
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
   cursor: pointer;
   margin-bottom: 0;
+}
+
+.prompt-form-checkbox.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.prompt-form-checkbox.disabled label {
+  cursor: not-allowed;
 }
 
 /* Options row */
 .prompt-form-options {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding-top: 8px;
-  border-top: 1px solid #3c3c3c;
+  gap: var(--spacing-2, 8px);
+  padding-top: var(--spacing-2, 8px);
+  border-top: 1px solid var(--color-border-default, #3c3c42);
 }
 
 /* Scope dropdown group (in options row) */
 .prompt-form-scope-group {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--spacing-2, 8px);
 }
 
 .prompt-form-scope-group .prompt-form-scope-label {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.7);
+  font-size: var(--font-size-sm, 11px);
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
   white-space: nowrap;
 }
 
@@ -983,72 +1055,72 @@
   flex: 1;
   min-width: 0;
   padding: 6px 10px;
-  font-size: 12px;
+  font-size: var(--font-size-sm, 11px);
 }
 
 .prompt-modal-footer {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
-  padding: 16px;
-  border-top: 1px solid #3c3c3c;
+  gap: var(--spacing-2, 8px);
+  padding: var(--spacing-4, 16px);
+  border-top: 1px solid var(--color-border-default, #3c3c42);
 }
 
 .prompt-modal-btn {
-  padding: 8px 16px;
+  padding: var(--spacing-2, 8px) var(--spacing-4, 16px);
   border: none;
-  border-radius: 4px;
-  font-size: 13px;
-  font-weight: 500;
+  border-radius: var(--radius-sm, 4px);
+  font-size: var(--font-size-base, 13px);
+  font-weight: var(--font-weight-medium, 500);
   cursor: pointer;
-  transition: all 0.15s ease;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  transition: all var(--transition-fast, 0.15s ease);
+  font-family: var(--font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
 }
 
 .prompt-modal-btn.cancel {
   background: transparent;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
 }
 
 .prompt-modal-btn.cancel:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--color-bg-card, #2a2a32);
 }
 
 .prompt-modal-btn.primary {
-  background: #6366f1;
+  background: var(--color-primary-base, #6366f1);
   color: white;
 }
 
 .prompt-modal-btn.primary:hover {
-  background: #5558e3;
+  background: var(--color-primary-hover, #5558e3);
 }
 
 .prompt-modal-btn.primary:disabled {
-  background: #4a4a4a;
-  color: rgba(255, 255, 255, 0.4);
+  background: var(--color-bg-cardHover, #32323c);
+  color: var(--color-text-disabled, rgba(255, 255, 255, 0.3));
   cursor: not-allowed;
 }
 
 /* Toggle button in terminal header (outside panel) */
 #prompt-toggle-btn {
   position: fixed;
-  top: 8px;
-  right: 8px;
-  background: rgba(99, 102, 241, 0.2);
-  border: 1px solid rgba(99, 102, 241, 0.3);
+  top: var(--spacing-2, 8px);
+  right: var(--spacing-2, 8px);
+  background: var(--color-primary-muted, rgba(99, 102, 241, 0.15));
+  border: 1px solid var(--color-primary-border, rgba(99, 102, 241, 0.4));
   color: #a5b4fc;
   padding: 6px 12px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm, 4px);
   cursor: pointer;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--font-size-sm, 11px);
+  font-weight: var(--font-weight-medium, 500);
   z-index: 50;
-  transition: all 0.15s ease;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  transition: all var(--transition-fast, 0.15s ease);
+  font-family: var(--font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
 }
 
 #prompt-toggle-btn:hover {
-  background: rgba(99, 102, 241, 0.3);
+  background: rgba(99, 102, 241, 0.25);
   border-color: rgba(99, 102, 241, 0.5);
 }
 
@@ -1104,17 +1176,17 @@
 }
 
 .prompt-images-container {
-  border: 1px solid #3c3c3c;
-  border-radius: 6px;
-  padding: 8px;
+  border: 1px solid var(--color-border-default, #3c3c42);
+  border-radius: var(--radius-md, 6px);
+  padding: var(--spacing-2, 8px);
   min-height: 60px;
-  background: rgba(0, 0, 0, 0.2);
-  transition: border-color 0.15s ease, background 0.15s ease;
+  background: var(--color-bg-base, #1a1a20);
+  transition: border-color var(--transition-fast, 0.15s ease), background var(--transition-fast, 0.15s ease);
 }
 
 .prompt-images-container.drag-over {
-  border-color: #6366f1;
-  background: rgba(99, 102, 241, 0.1);
+  border-color: var(--color-primary-base, #6366f1);
+  background: var(--color-primary-muted, rgba(99, 102, 241, 0.15));
 }
 
 .prompt-images-drop-zone {
@@ -1122,25 +1194,25 @@
   align-items: center;
   justify-content: center;
   height: 44px;
-  color: rgba(255, 255, 255, 0.4);
-  font-size: 12px;
+  color: var(--color-text-disabled, rgba(255, 255, 255, 0.3));
+  font-size: var(--font-size-sm, 11px);
   text-align: center;
 }
 
 .prompt-images-thumbnails {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--spacing-2, 8px);
 }
 
 .prompt-image-thumb {
   position: relative;
   width: 60px;
   height: 60px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm, 4px);
   overflow: hidden;
-  background: #2d2d2d;
-  border: 1px solid #3c3c3c;
+  background: var(--color-bg-elevated, #252530);
+  border: 1px solid var(--color-border-default, #3c3c42);
 }
 
 .prompt-image-thumb img {
@@ -1162,13 +1234,13 @@
   border: none;
   border-radius: 50%;
   cursor: pointer;
-  color: rgba(255, 255, 255, 0.8);
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
   padding: 0;
-  transition: background 0.15s ease;
+  transition: background var(--transition-fast, 0.15s ease);
 }
 
 .prompt-image-remove:hover {
-  background: #ef4444;
+  background: var(--color-status-error, #ef4444);
   color: white;
 }
 
@@ -1182,7 +1254,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #3c3c3c;
+  background: var(--color-bg-card, #2a2a32);
 }
 
 .prompt-image-thumb.thumbnail-error::before {

@@ -10,6 +10,7 @@ let exitListener = null;
 let usageListener = null;
 let themeChangeListener = null;
 let promptLibraryListener = null;
+let streamingStateListener = null;
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Send terminal input to main process
@@ -92,6 +93,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }
     themeChangeListener = (event, themeId) => callback(themeId);
     ipcRenderer.on('terminal-theme-changed', themeChangeListener);
+  },
+
+  // Listen for streaming state changes (for ready indicator)
+  onStreamingState: (callback) => {
+    if (streamingStateListener) {
+      ipcRenderer.removeListener('terminal-streaming-state', streamingStateListener);
+    }
+    streamingStateListener = (event, streaming) => callback(streaming);
+    ipcRenderer.on('terminal-streaming-state', streamingStateListener);
   },
 
   // Prompt Library APIs
@@ -193,6 +203,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeListener('prompt-library-updated', promptLibraryListener);
       promptLibraryListener = null;
     }
+    if (streamingStateListener) {
+      ipcRenderer.removeListener('terminal-streaming-state', streamingStateListener);
+      streamingStateListener = null;
+    }
   }
 });
 
@@ -212,5 +226,8 @@ window.addEventListener('beforeunload', () => {
   }
   if (promptLibraryListener) {
     ipcRenderer.removeListener('prompt-library-updated', promptLibraryListener);
+  }
+  if (streamingStateListener) {
+    ipcRenderer.removeListener('terminal-streaming-state', streamingStateListener);
   }
 });

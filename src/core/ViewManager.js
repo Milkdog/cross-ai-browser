@@ -273,16 +273,22 @@ class ViewManager {
   }
 
   /**
-   * Send streaming state to sidebar
+   * Send streaming state to sidebar and terminal
    * @private
    */
   _sendStreamingState(tabId, isStreaming, taskDescription) {
+    // Send to sidebar
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       this.mainWindow.webContents.send('streaming-state-changed', {
         tabId,
         isStreaming,
         taskDescription
       });
+    }
+    // Send to terminal (for ready indicator)
+    const terminalView = this.terminalViews.get(tabId);
+    if (terminalView && !terminalView.webContents.isDestroyed()) {
+      terminalView.webContents.send('terminal-streaming-state', isStreaming);
     }
   }
 

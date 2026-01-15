@@ -1,4 +1,9 @@
 /** @type {import('tailwindcss').Config} */
+// Import design tokens from shared source
+import { tokens, generateTailwindTheme } from '../design-tokens.js';
+
+const designTheme = generateTailwindTheme(tokens);
+
 export default {
   content: [
     "./index.html",
@@ -6,15 +11,11 @@ export default {
   ],
   theme: {
     extend: {
-      colors: {
-        'app-bg': '#1e1e1e',
-        'app-surface': '#252526',
-        'app-border': '#3c3c3c',
-        'app-text': '#d4d4d4',
-        'app-text-muted': '#808080',
-        'app-accent': '#d97757',
-        'app-accent-hover': '#e88868',
-      }
+      colors: designTheme.colors,
+      fontFamily: designTheme.fontFamily,
+      fontSize: designTheme.fontSize,
+      borderRadius: designTheme.borderRadius,
+      boxShadow: designTheme.boxShadow,
     },
   },
   plugins: [],

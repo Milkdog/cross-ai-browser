@@ -502,3 +502,62 @@ const terminalLayout = document.getElementById('terminal-layout');
 if (terminalLayout) {
   resizeObserver.observe(terminalLayout);
 }
+
+// ==================== Ready Indicator ====================
+// Shows a pulsing border when terminal is awaiting user input
+// Disappears when user interacts with the terminal
+
+let isStreaming = false;
+let userInteracted = false;
+let readyIndicatorTimeout = null;
+
+function updateReadyIndicator() {
+  const shouldShowReady = !isStreaming && !userInteracted;
+  container.classList.toggle('ready-for-input', shouldShowReady);
+}
+
+function markUserInteraction() {
+  userInteracted = true;
+  updateReadyIndicator();
+}
+
+function resetReadyIndicator() {
+  // Reset after a delay when streaming stops
+  clearTimeout(readyIndicatorTimeout);
+  readyIndicatorTimeout = setTimeout(() => {
+    userInteracted = false;
+    updateReadyIndicator();
+  }, 2000); // Wait 2 seconds after streaming stops to show ready indicator
+}
+
+// Detect user interaction
+container.addEventListener('mouseenter', markUserInteraction);
+container.addEventListener('click', markUserInteraction);
+container.addEventListener('keydown', markUserInteraction);
+
+// When mouse leaves the window entirely, reset after delay
+document.addEventListener('mouseleave', () => {
+  clearTimeout(readyIndicatorTimeout);
+  readyIndicatorTimeout = setTimeout(() => {
+    userInteracted = false;
+    updateReadyIndicator();
+  }, 5000); // Wait 5 seconds after mouse leaves
+});
+
+// Listen for streaming state from main process
+window.electronAPI.onStreamingState?.((streaming) => {
+  isStreaming = streaming;
+  if (streaming) {
+    // Streaming started - hide ready indicator
+    userInteracted = true;
+    updateReadyIndicator();
+  } else {
+    // Streaming stopped - schedule ready indicator to show
+    resetReadyIndicator();
+  }
+});
+
+// Initial state - show ready indicator after terminal loads
+setTimeout(() => {
+  updateReadyIndicator();
+}, 3000);

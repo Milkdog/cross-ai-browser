@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'">
   <title>Settings</title>
+  <script type="module" src="design-system.js"></script>
   <style>
     * {
       margin: 0;
@@ -12,8 +13,8 @@
     }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: rgba(0, 0, 0, 0.6);
+      font-family: var(--font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+      background: transparent;
       height: 100vh;
       display: flex;
       align-items: center;
@@ -21,51 +22,51 @@
     }
 
     .settings-modal {
-      background: #1e1e2e;
-      border-radius: 12px;
-      padding: 20px;
+      background: var(--color-bg-elevated, #252530);
+      border-radius: var(--radius-xl, 12px);
+      padding: var(--spacing-5, 20px);
       width: 320px;
       max-width: 90%;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow: var(--shadow-lg, 0 10px 15px rgba(0, 0, 0, 0.5));
+      border: 1px solid var(--color-border-default, #3c3c42);
     }
 
     .settings-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 16px;
-      padding-bottom: 12px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      margin-bottom: var(--spacing-4, 16px);
+      padding-bottom: var(--spacing-3, 12px);
+      border-bottom: 1px solid var(--color-border-subtle, #333338);
     }
 
     .settings-title {
-      color: rgba(255, 255, 255, 0.9);
+      color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
       font-size: 15px;
-      font-weight: 600;
+      font-weight: var(--font-weight-semibold, 600);
     }
 
     .close-btn {
       width: 28px;
       height: 28px;
-      border-radius: 6px;
+      border-radius: var(--radius-md, 6px);
       border: none;
-      background: rgba(255, 255, 255, 0.06);
+      background: var(--color-bg-card, #2a2a32);
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      color: rgba(255, 255, 255, 0.5);
-      transition: all 0.2s ease;
+      color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
+      transition: all var(--transition-normal, 0.2s ease);
     }
 
     .close-btn:hover {
-      background: rgba(255, 255, 255, 0.12);
-      color: rgba(255, 255, 255, 0.8);
+      background: var(--color-bg-cardHover, #32323c);
+      color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
     }
 
     .settings-section {
-      margin-bottom: 20px;
+      margin-bottom: var(--spacing-5, 20px);
     }
 
     .settings-section:last-child {
@@ -73,16 +74,16 @@
     }
 
     .section-title {
-      color: rgba(255, 255, 255, 0.4);
-      font-size: 10px;
-      font-weight: 600;
+      color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
+      font-size: var(--font-size-xs, 10px);
+      font-weight: var(--font-weight-semibold, 600);
       text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-bottom: 12px;
+      letter-spacing: var(--letter-spacing-wide, 0.5px);
+      margin-bottom: var(--spacing-3, 12px);
     }
 
     .settings-group {
-      margin-bottom: 12px;
+      margin-bottom: var(--spacing-3, 12px);
     }
 
     .settings-group:last-child {
@@ -91,9 +92,9 @@
 
     .settings-label {
       display: block;
-      color: rgba(255, 255, 255, 0.6);
-      font-size: 11px;
-      margin-bottom: 6px;
+      color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
+      font-size: var(--font-size-sm, 11px);
+      margin-bottom: var(--spacing-1, 4px);
     }
 
     /* Toggle switch */
@@ -111,10 +112,10 @@
     .toggle-slider {
       width: 36px;
       height: 20px;
-      background: rgba(255, 255, 255, 0.15);
-      border-radius: 10px;
+      background: var(--color-bg-cardHover, #32323c);
+      border-radius: var(--radius-full, 9999px);
       position: relative;
-      transition: background 0.2s ease;
+      transition: background var(--transition-normal, 0.2s ease);
     }
 
     .toggle-slider::after {
@@ -126,11 +127,11 @@
       border-radius: 50%;
       top: 2px;
       left: 2px;
-      transition: transform 0.2s ease;
+      transition: transform var(--transition-normal, 0.2s ease);
     }
 
     .settings-toggle input:checked + .toggle-slider {
-      background: #6366f1;
+      background: var(--color-primary-base, #6366f1);
     }
 
     .settings-toggle input:checked + .toggle-slider::after {
@@ -138,70 +139,70 @@
     }
 
     .toggle-label {
-      color: rgba(255, 255, 255, 0.8);
-      font-size: 12px;
+      color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
+      font-size: var(--font-size-sm, 11px);
     }
 
     /* Select dropdown */
     .settings-group select {
       width: 100%;
-      padding: 8px 10px;
-      background: rgba(255, 255, 255, 0.08);
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 6px;
-      color: rgba(255, 255, 255, 0.9);
-      font-size: 12px;
+      padding: var(--spacing-2, 8px) 10px;
+      background: var(--color-bg-input, #1e1e24);
+      border: 1px solid var(--color-border-default, #3c3c42);
+      border-radius: var(--radius-md, 6px);
+      color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
+      font-size: var(--font-size-sm, 11px);
       cursor: pointer;
       outline: none;
     }
 
     .settings-group select:hover {
-      background: rgba(255, 255, 255, 0.12);
+      background: var(--color-bg-card, #2a2a32);
     }
 
     .settings-group select:focus {
-      border-color: #6366f1;
+      border-color: var(--color-primary-base, #6366f1);
     }
 
     .settings-group select option {
-      background: #1e1e2e;
-      color: white;
+      background: var(--color-bg-elevated, #252530);
+      color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
     }
 
     /* Action button */
     .action-btn {
       width: 100%;
       padding: 10px;
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 6px;
-      color: rgba(255, 255, 255, 0.7);
-      font-size: 12px;
+      background: var(--color-bg-card, #2a2a32);
+      border: 1px solid var(--color-border-default, #3c3c42);
+      border-radius: var(--radius-md, 6px);
+      color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
+      font-size: var(--font-size-sm, 11px);
       cursor: pointer;
-      transition: all 0.2s ease;
+      transition: all var(--transition-normal, 0.2s ease);
     }
 
     .action-btn:hover {
-      background: rgba(255, 255, 255, 0.1);
-      border-color: rgba(255, 255, 255, 0.2);
-      color: rgba(255, 255, 255, 0.9);
+      background: var(--color-bg-cardHover, #32323c);
+      border-color: var(--color-border-hover, #4a4a52);
+      color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
     }
 
     .action-btn.danger:hover {
-      background: rgba(239, 68, 68, 0.1);
+      background: var(--color-status-errorMuted, rgba(239, 68, 68, 0.15));
       border-color: rgba(239, 68, 68, 0.3);
-      color: #ef4444;
+      color: var(--color-status-error, #ef4444);
     }
 
     /* Theme preview */
     .theme-preview {
-      background: #1e1e1e;
-      border-radius: 6px;
+      background: var(--color-bg-base, #1a1a20);
+      border-radius: var(--radius-md, 6px);
       padding: 10px 12px;
       font-family: Menlo, Monaco, 'Courier New', monospace;
-      font-size: 11px;
+      font-size: var(--font-size-sm, 11px);
       line-height: 1.5;
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      border: 1px solid var(--color-border-default, #3c3c42);
     }
 
     .preview-line {
@@ -235,37 +236,37 @@
     /* Input field */
     .settings-input {
       width: 100%;
-      padding: 8px 10px;
-      background: rgba(255, 255, 255, 0.08);
-      border: 1px solid rgba(255, 255, 255, 0.1);
-      border-radius: 6px;
-      color: rgba(255, 255, 255, 0.9);
-      font-size: 12px;
+      padding: var(--spacing-2, 8px) 10px;
+      background: var(--color-bg-input, #1e1e24);
+      border: 1px solid var(--color-border-default, #3c3c42);
+      border-radius: var(--radius-md, 6px);
+      color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
+      font-size: var(--font-size-sm, 11px);
       outline: none;
     }
 
     .settings-input:hover {
-      background: rgba(255, 255, 255, 0.12);
+      background: var(--color-bg-card, #2a2a32);
     }
 
     .settings-input:focus {
-      border-color: #6366f1;
+      border-color: var(--color-primary-base, #6366f1);
     }
 
     .settings-input::placeholder {
-      color: rgba(255, 255, 255, 0.3);
+      color: var(--color-text-disabled, rgba(255, 255, 255, 0.3));
     }
 
     /* Primary button */
     .action-btn.primary {
-      background: #6366f1;
-      border-color: #6366f1;
+      background: var(--color-primary-base, #6366f1);
+      border-color: var(--color-primary-base, #6366f1);
       color: white;
     }
 
     .action-btn.primary:hover {
-      background: #5558e3;
-      border-color: #5558e3;
+      background: var(--color-primary-hover, #5558e3);
+      border-color: var(--color-primary-hover, #5558e3);
     }
 
     .action-btn.primary:disabled {
@@ -275,42 +276,42 @@
 
     /* Error message */
     .error-message {
-      color: #ef4444;
-      font-size: 11px;
-      padding: 6px 8px;
-      background: rgba(239, 68, 68, 0.1);
-      border-radius: 4px;
+      color: var(--color-status-error, #ef4444);
+      font-size: var(--font-size-sm, 11px);
+      padding: var(--spacing-1, 4px) var(--spacing-2, 8px);
+      background: var(--color-status-errorMuted, rgba(239, 68, 68, 0.15));
+      border-radius: var(--radius-sm, 4px);
     }
 
     /* User info */
     .user-info {
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: var(--spacing-1, 4px);
     }
 
     .user-email {
-      color: rgba(255, 255, 255, 0.9);
-      font-size: 12px;
+      color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
+      font-size: var(--font-size-sm, 11px);
     }
 
     .sync-status {
-      color: rgba(255, 255, 255, 0.5);
-      font-size: 11px;
+      color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
+      font-size: var(--font-size-sm, 11px);
     }
 
     .sync-status.syncing {
-      color: #6366f1;
+      color: var(--color-primary-base, #6366f1);
     }
 
     .sync-status.success {
-      color: #22c55e;
+      color: var(--color-status-success, #22c55e);
     }
 
     /* Hint text */
     .settings-hint {
-      color: rgba(255, 255, 255, 0.4);
-      font-size: 10px;
+      color: var(--color-text-disabled, rgba(255, 255, 255, 0.3));
+      font-size: var(--font-size-xs, 10px);
     }
   </style>
 </head>

@@ -8,14 +8,35 @@ html, body {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #1e1e1e;
+  background: var(--color-bg-base, #1a1a20);
   position: relative;
 }
 
 #terminal-container {
   height: 100%;
-  padding: 8px;
+  padding: var(--spacing-2, 8px);
   position: relative;
+  /* Ready indicator - pulsing border when awaiting input */
+  /* Use console background color when inactive so border blends in */
+  border: 8px solid var(--color-bg-base, #1a1a20);
+  transition: border-color var(--transition-slow, 0.3s ease), box-shadow var(--transition-slow, 0.3s ease);
+}
+
+/* Ready indicator active state - green pulsing border with strong inner glow */
+#terminal-container.ready-for-input {
+  border-color: var(--color-ready-border, rgba(34, 197, 94, 1));
+  animation: ready-pulse 3s ease-in-out infinite;
+}
+
+@keyframes ready-pulse {
+  0%, 100% {
+    border-color: var(--color-ready-border, rgba(34, 197, 94, 1));
+    box-shadow: inset 0 0 60px var(--color-ready-glow, rgba(34, 197, 94, 0.5)), inset 0 0 120px var(--color-ready-glowFar, rgba(34, 197, 94, 0.25));
+  }
+  50% {
+    border-color: var(--color-ready-borderDim, rgba(34, 197, 94, 0.5));
+    box-shadow: inset 0 0 40px var(--color-ready-glowDim, rgba(34, 197, 94, 0.25)), inset 0 0 80px var(--color-ready-glowDimFar, rgba(34, 197, 94, 0.15));
+  }
 }
 
 /* Override xterm styles for better appearance */
@@ -24,7 +45,7 @@ html, body {
 }
 
 .xterm-viewport {
-  background-color: #1e1e1e !important;
+  background-color: var(--color-bg-base, #1a1a20) !important;
 }
 
 .xterm-screen {
@@ -38,25 +59,25 @@ html, body {
   left: 0;
   right: 0;
   height: 44px;
-  background: rgba(30, 30, 30, 0.98);
-  border-top: 1px solid #3c3c3c;
-  padding: 6px 12px;
+  background: var(--color-bg-surface, rgba(31, 31, 36, 0.98));
+  border-top: 1px solid var(--color-border-subtle, #333338);
+  padding: 6px var(--spacing-3, 12px);
   display: flex;
-  gap: 24px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  font-size: 11px;
+  gap: var(--spacing-6, 24px);
+  font-family: var(--font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+  font-size: var(--font-size-sm, 11px);
 }
 
 .usage-bar {
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--spacing-2, 8px);
 }
 
 .usage-label {
-  color: #808080;
-  font-size: 10px;
+  color: var(--color-text-muted, #808080);
+  font-size: var(--font-size-xs, 10px);
   min-width: 48px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -65,30 +86,30 @@ html, body {
 .usage-track {
   flex: 1;
   height: 4px;
-  background: #3c3c3c;
+  background: var(--color-border-subtle, #333338);
   border-radius: 2px;
   overflow: hidden;
 }
 
 .usage-fill {
   height: 100%;
-  background: #569cd6;
+  background: var(--color-primary-base, #6366f1);
   border-radius: 2px;
-  transition: width 0.3s ease, background-color 0.3s ease;
+  transition: width var(--transition-slow, 0.3s ease), background-color var(--transition-slow, 0.3s ease);
   width: 0%;
 }
 
 .usage-fill.warning {
-  background: #dcdcaa;
+  background: var(--color-status-warning, #fbbf24);
 }
 
 .usage-fill.critical {
-  background: #f44747;
+  background: var(--color-status-error, #ef4444);
 }
 
 .usage-text {
-  color: #d4d4d4;
-  font-size: 10px;
+  color: var(--color-text-secondary, #d4d4d4);
+  font-size: var(--font-size-xs, 10px);
   min-width: 100px;
   text-align: right;
   white-space: nowrap;

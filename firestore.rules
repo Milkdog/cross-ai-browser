@@ -1,0 +1,48 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Prompts collection - users can only access their own prompts
+    match /prompts/{promptId} {
+      // Read: User must own the prompt
+      allow read: if request.auth != null && request.auth.uid == resource.data.userId;
+
+      // Create: User must set themselves as owner
+      allow create: if request.auth != null
+                    && request.auth.uid == request.resource.data.userId
+                    && validatePromptFields(request.resource.data);
+
+      // Update: User must own the prompt AND cannot change userId
+      allow update: if request.auth != null
+                    && request.auth.uid == resource.data.userId
+                    && request.auth.uid == request.resource.data.userId
+                    && validatePromptFields(request.resource.data);
+
+      // Delete: User must own the prompt
+      allow delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    }
+
+    // Projects collection - users can only access their own projects
+    match /projects/{projectId} {
+      allow read: if request.auth != null && request.auth.uid == resource.data.userId;
+
+      allow create: if request.auth != null
+                    && request.auth.uid == request.resource.data.userId;
+
+      allow update: if request.auth != null
+                    && request.auth.uid == resource.data.userId
+                    && request.auth.uid == request.resource.data.userId;
+
+      allow delete: if request.auth != null && request.auth.uid == resource.data.userId;
+    }
+
+    // Validate prompt fields
+    function validatePromptFields(data) {
+      return data.keys().hasAll(['userId', 'prompt'])
+             && data.prompt is string
+             && data.prompt.size() <= 5000
+             && (!data.keys().hasAny(['title']) || data.title is string)
+             && (!data.keys().hasAny(['labels']) || data.labels is list)
+             && (!data.keys().hasAny(['images']) || data.images is list);
+    }
+  }
+}

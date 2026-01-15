@@ -654,10 +654,11 @@
   background: #2d2d2d;
   border: 1px solid #444444;
   border-radius: 8px;
-  width: 450px;
+  width: 700px;
   max-width: 90%;
   max-height: 90vh;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
@@ -693,7 +694,83 @@
 }
 
 .prompt-modal-body {
+  display: flex;
+  gap: 16px;
   padding: 16px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Left column - Prompt textarea */
+.prompt-modal-left {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.prompt-modal-left .prompt-form-group {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0;
+}
+
+.prompt-modal-left .prompt-form-textarea {
+  flex: 1;
+  min-height: 300px;
+  resize: none;
+}
+
+/* Right column - Metadata sidebar */
+.prompt-modal-right {
+  width: 220px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.prompt-modal-right .prompt-form-group {
+  margin-bottom: 0;
+}
+
+.prompt-modal-right .prompt-form-label {
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.prompt-modal-right .prompt-form-input {
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.prompt-modal-right .prompt-form-hint {
+  font-size: 10px;
+  margin-bottom: 4px;
+}
+
+/* Smaller image thumbnails in sidebar */
+.prompt-modal-right .prompt-image-thumb {
+  width: 48px;
+  height: 48px;
+}
+
+.prompt-modal-right .prompt-images-drop-zone {
+  height: 36px;
+  font-size: 11px;
+}
+
+.prompt-modal-right .prompt-labels-input {
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.prompt-modal-right .prompt-label-tag {
+  font-size: 11px;
+  padding: 3px 6px;
 }
 
 .prompt-form-group {
@@ -812,6 +889,53 @@
   color: rgba(255, 255, 255, 0.3);
 }
 
+/* Label suggestions dropdown */
+.prompt-labels-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: #2d2d2d;
+  border: 1px solid #444444;
+  border-top: none;
+  border-radius: 0 0 4px 4px;
+  max-height: 150px;
+  overflow-y: auto;
+  z-index: 10;
+  display: none;
+}
+
+.prompt-labels-suggestions.visible {
+  display: block;
+}
+
+.prompt-labels-suggestion {
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.prompt-labels-suggestion:hover,
+.prompt-labels-suggestion.highlighted {
+  background: #3c3c3c;
+}
+
+.prompt-labels-suggestion .match {
+  color: #6366f1;
+  font-weight: 500;
+}
+
+.prompt-labels-input-wrapper {
+  position: relative;
+}
+
+/* Smaller suggestions in sidebar */
+.prompt-modal-right .prompt-labels-suggestion {
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
 /* Checkbox form group */
 .prompt-form-checkbox {
   display: flex;
@@ -836,8 +960,10 @@
 /* Options row */
 .prompt-form-options {
   display: flex;
-  gap: 24px;
-  margin-bottom: 16px;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #3c3c3c;
 }
 
 /* Scope dropdown group (in options row) */
@@ -845,19 +971,19 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-left: auto;
 }
 
 .prompt-form-scope-group .prompt-form-scope-label {
-  font-size: 13px;
+  font-size: 12px;
   color: rgba(255, 255, 255, 0.7);
   white-space: nowrap;
 }
 
 .prompt-scope-select {
-  width: auto;
-  min-width: 100px;
+  flex: 1;
+  min-width: 0;
   padding: 6px 10px;
+  font-size: 12px;
 }
 
 .prompt-modal-footer {

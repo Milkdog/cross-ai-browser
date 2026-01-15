@@ -23,6 +23,7 @@ An Electron app that provides a unified tabbed interface for AI chat services (C
 - `PromptLibraryManager.js` - Manages prompt CRUD, ordering, favorites, labels, and scopes
 - `PromptImageManager.js` - Handles image storage, thumbnails, and clipboard operations
 - `PromptStorageEngine.js` - File I/O for prompt library with atomic writes
+- `FirebaseSyncAdapter.js` - Bidirectional Firebase sync for cross-device prompt access
 
 ### History Modules (`src/core/history/`)
 - `StorageEngine.js` - File I/O abstraction, atomic writes, path hashing by cwd
@@ -145,6 +146,31 @@ A collapsible panel in Claude Code terminals for managing reusable prompts with 
 - Keyboard shortcut: Cmd+Shift+P to toggle
 - Drag prompt card to terminal to insert
 
+### PWA Companion App
+A Progressive Web App for managing prompts from iPhone or any device, synced via Firebase.
+
+**Location:** `pwa/` directory
+
+**Tech Stack:**
+- React 18 + Vite
+- Tailwind CSS (matching desktop app theme)
+- Firebase (Auth, Firestore, Storage)
+- PWA with offline support
+
+**Setup:**
+1. Create Firebase project with Auth (Email/Password), Firestore, and Storage
+2. Copy config to `pwa/src/services/firebase.js`
+3. Deploy Firestore rules from `pwa/firestore.rules`
+4. Deploy Storage rules from `pwa/storage.rules`
+5. Run `cd pwa && npm install && npm run build`
+6. Deploy to Firebase Hosting or any static host
+
+**Sync Architecture:**
+- `FirebaseSyncAdapter.js` in Electron app handles bidirectional sync
+- Real-time sync via Firestore listeners
+- Auto-merge conflict resolution (union for arrays, newer wins for content)
+- Images stored in Firebase Storage per user
+
 ## Commands
 - `npm start` - Run in development
 - `npm run build` - Build distributable .app/.dmg
@@ -178,6 +204,7 @@ src/
 │   ├── PromptLibraryManager.js # Prompt CRUD and organization
 │   ├── PromptImageManager.js  # Image storage and clipboard
 │   ├── PromptStorageEngine.js # Prompt file I/O
+│   ├── FirebaseSyncAdapter.js # Firebase bidirectional sync
 │   └── history/
 │       ├── StorageEngine.js   # File I/O for history
 │       ├── SessionRecorder.js # PTY output buffering
@@ -193,6 +220,19 @@ src/
 assets/
 ├── icon.svg                   # Source icon (3 overlapping circles)
 └── icon.icns                  # macOS app icon
+pwa/                           # Companion PWA for mobile access
+├── src/
+│   ├── components/            # React components
+│   ├── hooks/                 # useAuth, usePrompts hooks
+│   ├── pages/                 # LoginPage, HomePage, SetupPage
+│   └── services/              # Firebase, auth, prompts, images
+├── firestore.rules            # Firestore security rules
+└── storage.rules              # Firebase Storage rules
+firebase.json                  # Firebase project configuration
+firestore.rules                # Root-level Firestore security rules
+firestore.indexes.json         # Firestore index definitions
+storage.rules                  # Root-level Storage security rules
+.firebaserc                    # Firebase project aliases
 ```
 
 ## Security

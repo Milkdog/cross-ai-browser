@@ -26,7 +26,9 @@
       "icon": "assets/icon.icns"
     },
     "win": {
-      "target": ["nsis"],
+      "target": [
+        "nsis"
+      ],
       "icon": "assets/icon.ico",
       "files": [
         "**/*",
@@ -43,6 +45,7 @@
   },
   "dependencies": {
     "electron-store": "^8.2.0",
+    "firebase": "^12.7.0",
     "uuid": "^13.0.0",
     "xterm": "^5.3.0",
     "xterm-addon-fit": "^0.8.0"

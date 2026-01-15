@@ -355,6 +355,149 @@ class PromptLibraryManager extends EventEmitter {
   }
 
   /**
+   * Create a prompt from remote data (preserves the remote ID)
+   * Used for real-time sync from Firebase/PWA
+   * @param {string} cwd - Working directory path (or '__global__' for global)
+   * @param {Object} promptData - Prompt data including id
+   * @returns {Promise<Object>} Created prompt
+   */
+  async createPromptFromRemote(cwd, promptData) {
+    const scope = promptData.scope || 'project';
+    const isGlobal = scope === 'global' || cwd === '__global__';
+    const prompts = isGlobal
+      ? this.getGlobalPrompts()
+      : this.getProjectPrompts(cwd);
+
+    // Check if prompt already exists (avoid duplicates)
+    if (prompts.find(p => p.id === promptData.id)) {
+      return this.updatePromptFromRemote(cwd, promptData.id, promptData);
+    }
+
+    if (prompts.length >= MAX_PROMPTS_PER_DIRECTORY) {
+      console.warn('[PromptLibraryManager] Max prompts reached, skipping remote create');
+      return null;
+    }
+
+    const now = Date.now();
+    const prompt = {
+      id: promptData.id,
+      prompt: (promptData.prompt || '').trim(),
+      title: promptData.title ? promptData.title.trim() : null,
+      labels: promptData.labels || [],
+      images: promptData.images || [],
+      isFavorite: promptData.isFavorite || false,
+      reusable: promptData.reusable || false,
+      done: promptData.done || false,
+      testing: promptData.testing || false,
+      scope: isGlobal ? 'global' : 'project',
+      order: promptData.order !== undefined ? promptData.order : prompts.length,
+      createdAt: promptData.createdAt || now,
+      updatedAt: promptData.updatedAt || now
+    };
+
+    prompts.push(prompt);
+
+    if (isGlobal) {
+      await this.storageEngine.writeGlobalPrompts(prompts);
+    } else {
+      await this.storageEngine.writePrompts(cwd, prompts);
+    }
+
+    this.emit('prompts-updated', { cwd, prompts: this.getPromptsForCwd(cwd) });
+    return prompt;
+  }
+
+  /**
+   * Update a prompt from remote data
+   * Used for real-time sync from Firebase/PWA
+   * @param {string} cwd - Working directory path
+   * @param {string} promptId - Prompt ID
+   * @param {Object} updates - Remote data
+   * @returns {Promise<Object>} Updated prompt
+   */
+  async updatePromptFromRemote(cwd, promptId, updates) {
+    const scope = updates.scope || 'project';
+    const isGlobal = scope === 'global' || cwd === '__global__';
+    const prompts = isGlobal
+      ? this.getGlobalPrompts()
+      : this.getProjectPrompts(cwd);
+
+    const promptIndex = prompts.findIndex(p => p.id === promptId);
+    if (promptIndex === -1) {
+      // Prompt doesn't exist locally, create it instead
+      return this.createPromptFromRemote(cwd, { ...updates, id: promptId });
+    }
+
+    const prompt = prompts[promptIndex];
+
+    // Update fields from remote
+    if (updates.prompt !== undefined) prompt.prompt = (updates.prompt || '').trim();
+    if (updates.title !== undefined) prompt.title = updates.title ? updates.title.trim() : null;
+    if (updates.labels !== undefined) prompt.labels = updates.labels || [];
+    if (updates.isFavorite !== undefined) prompt.isFavorite = updates.isFavorite;
+    if (updates.reusable !== undefined) prompt.reusable = updates.reusable;
+    if (updates.done !== undefined) prompt.done = updates.done;
+    if (updates.testing !== undefined) prompt.testing = updates.testing;
+    if (updates.order !== undefined) prompt.order = updates.order;
+
+    prompt.updatedAt = Date.now();
+
+    if (isGlobal) {
+      await this.storageEngine.writeGlobalPrompts(prompts);
+    } else {
+      await this.storageEngine.writePrompts(cwd, prompts);
+    }
+
+    this.emit('prompts-updated', { cwd, prompts: this.getPromptsForCwd(cwd) });
+    return prompt;
+  }
+
+  /**
+   * Delete a prompt by ID from any location
+   * Used for real-time sync from Firebase/PWA
+   * @param {string} promptId - Prompt ID
+   * @returns {Promise<boolean>} True if found and deleted
+   */
+  async deletePromptById(promptId) {
+    // Check global prompts first
+    const globalPrompts = this.getGlobalPrompts();
+    const globalIndex = globalPrompts.findIndex(p => p.id === promptId);
+    if (globalIndex !== -1) {
+      globalPrompts.splice(globalIndex, 1);
+      globalPrompts.forEach((p, i) => p.order = i);
+      await this.storageEngine.writeGlobalPrompts(globalPrompts);
+      this.emit('prompts-updated', { cwd: '__global__', prompts: globalPrompts });
+      return true;
+    }
+
+    // Check all project prompt files
+    const fs = require('fs');
+    const files = fs.readdirSync(this.storageEngine.getBaseDir());
+    for (const file of files) {
+      if (file === 'global.json' || !file.endsWith('.json')) continue;
+
+      const filePath = require('path').join(this.storageEngine.getBaseDir(), file);
+      try {
+        const content = fs.readFileSync(filePath, 'utf-8');
+        const prompts = JSON.parse(content);
+        const index = prompts.findIndex(p => p.id === promptId);
+        if (index !== -1) {
+          prompts.splice(index, 1);
+          prompts.forEach((p, i) => p.order = i);
+          await fs.promises.writeFile(filePath, JSON.stringify(prompts, null, 2));
+          // We don't know the actual cwd here, but emit with a placeholder
+          this.emit('prompts-updated', { cwd: file.replace('.json', ''), prompts });
+          return true;
+        }
+      } catch (err) {
+        // Skip invalid files
+      }
+    }
+
+    return false;
+  }
+
+  /**
    * Duplicate a prompt
    * @param {string} cwd - Working directory path
    * @param {string} promptId - Prompt ID to duplicate

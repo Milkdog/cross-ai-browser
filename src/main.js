@@ -27,6 +27,17 @@ const PromptLibraryManager = require('./core/PromptLibraryManager');
 const PromptImageManager = require('./core/PromptImageManager');
 const TerminalThemes = require('./core/TerminalThemes');
 const HooksManager = require('./core/HooksManager');
+const FirebaseSyncAdapter = require('./core/FirebaseSyncAdapter');
+
+// Firebase configuration (hardcoded for prompt-library-pwa project)
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyCb1dAdSm_Xx3y1qDuMB3xSgO9Zd_FG6nQ",
+  authDomain: "prompt-library-pwa.firebaseapp.com",
+  projectId: "prompt-library-pwa",
+  storageBucket: "prompt-library-pwa.firebasestorage.app",
+  messagingSenderId: "636149115447",
+  appId: "1:636149115447:web:d51e36784660a22ee0adb2"
+};
 
 // Set app name (shown in menu bar)
 app.setName('Cross AI Browser');
@@ -85,6 +96,8 @@ let historyManager = null;
 let hooksManager = null;
 let promptLibraryManager = null;
 let promptImageManager = null;
+let firebaseSyncAdapter = null;
+let settingsView = null;
 let servicePickerWindow = null;
 
 // Track tabs with unread completions (for badge display)
@@ -140,7 +153,11 @@ function handleTerminalHookCompletion(event) {
   }
 
   if (!tabId) {
+    // Debug: show what cwds we have vs what we're looking for
+    const allTabData = store.get('tabData', {});
+    const storedCwds = Object.entries(allTabData).map(([id, data]) => ({ id, cwd: data?.cwd }));
     console.log('[Main] handleTerminalHookCompletion: Could not find tab for cwd', cwd);
+    console.log('[Main] Available tab cwds:', storedCwds);
     return;
   }
 
@@ -248,6 +265,132 @@ function createWindow() {
   // Initialize PromptImageManager
   promptImageManager = new PromptImageManager(app.getPath('userData'));
 
+  // Initialize FirebaseSyncAdapter for cloud sync
+  firebaseSyncAdapter = new FirebaseSyncAdapter({
+    store,
+    promptLibraryManager,
+    userDataPath: app.getPath('userData')
+  });
+
+  // Initialize Firebase and restore session if credentials exist
+  firebaseSyncAdapter.initialize(FIREBASE_CONFIG).then(async (result) => {
+    if (result.success) {
+      console.log('[Main] FirebaseSyncAdapter initialized');
+
+      // Try to restore previous session
+      const restoreResult = await firebaseSyncAdapter.restoreSession();
+      if (restoreResult.success) {
+        console.log('[Main] Firebase session restored for', restoreResult.user.email);
+      }
+    } else {
+      console.error('[Main] Failed to initialize Firebase:', result.error);
+    }
+  });
+
+  // Forward Firebase sync events to settings view
+  firebaseSyncAdapter.on('migration-started', () => {
+    if (settingsView && settingsView.webContents) {
+      settingsView.webContents.send('firebase-sync-status', { type: 'syncing' });
+    }
+  });
+
+  firebaseSyncAdapter.on('migration-complete', (data) => {
+    if (settingsView && settingsView.webContents) {
+      settingsView.webContents.send('firebase-sync-status', {
+        type: 'migration-complete',
+        ...data
+      });
+    }
+  });
+
+  // Queue for processing remote changes sequentially (prevents race conditions)
+  const remoteSyncQueue = [];
+  let isProcessingRemoteSync = false;
+
+  async function processRemoteSyncQueue() {
+    if (isProcessingRemoteSync || remoteSyncQueue.length === 0) return;
+    isProcessingRemoteSync = true;
+
+    while (remoteSyncQueue.length > 0) {
+      const task = remoteSyncQueue.shift();
+      try {
+        await task();
+      } catch (err) {
+        console.error('[Main] Error processing remote sync task:', err.message);
+      }
+    }
+
+    isProcessingRemoteSync = false;
+  }
+
+  // Handle real-time prompt changes from Firebase (e.g., from PWA)
+  firebaseSyncAdapter.on('remote-prompt-changed', (remotePrompt) => {
+    console.log('[Main] Queued remote-prompt-changed:', remotePrompt.id, remotePrompt.title);
+
+    // Add to queue instead of processing immediately
+    remoteSyncQueue.push(async () => {
+      if (!promptLibraryManager) {
+        console.warn('[Main] promptLibraryManager not initialized');
+        return;
+      }
+
+      const { id, projectId, scope, title, prompt, labels, isFavorite, reusable, done, testing, order } = remotePrompt;
+
+      // Resolve projectId to cwd
+      const cwd = await firebaseSyncAdapter.resolveProjectIdToCwd(projectId);
+      if (!cwd) {
+        console.warn('[Main] Could not resolve projectId to cwd:', projectId);
+        return;
+      }
+
+      // Check if this prompt already exists locally
+      const existingPrompt = promptLibraryManager.getPromptById(cwd, id);
+
+      const promptData = {
+        id,
+        title: title || '',
+        prompt: prompt || '',
+        labels: labels || [],
+        isFavorite: isFavorite || false,
+        reusable: reusable || false,
+        done: done || false,
+        testing: testing || false,
+        scope: scope || 'project',
+        order: order || 0
+      };
+
+      if (existingPrompt) {
+        // Update existing prompt
+        await promptLibraryManager.updatePromptFromRemote(cwd, id, promptData);
+      } else {
+        // Create new prompt
+        await promptLibraryManager.createPromptFromRemote(cwd, promptData);
+      }
+
+      console.log('[Main] Applied remote prompt change:', id);
+    });
+
+    // Start processing queue
+    processRemoteSyncQueue();
+  });
+
+  firebaseSyncAdapter.on('remote-prompt-deleted', ({ id }) => {
+    console.log('[Main] Queued remote-prompt-deleted:', id);
+
+    // Add to queue instead of processing immediately
+    remoteSyncQueue.push(async () => {
+      if (!promptLibraryManager) return;
+
+      const deleted = await promptLibraryManager.deletePromptById(id);
+      if (deleted) {
+        console.log('[Main] Deleted prompt from remote:', id);
+      }
+    });
+
+    // Start processing queue
+    processRemoteSyncQueue();
+  });
+
   // Forward prompt library events to relevant terminals
   promptLibraryManager.on('prompts-updated', (data) => {
     const { cwd, prompts } = data;
@@ -311,7 +454,8 @@ function createWindow() {
       notification.show();
     },
     historyManager,
-    hooksManager
+    hooksManager,
+    firebaseSyncAdapter
   });
 
   // Initialize DownloadManager with shared session
@@ -745,7 +889,52 @@ ipcMain.handle('get-all-terminal-themes', () => {
   return TerminalThemes.getAllThemes();
 });
 
-let settingsView = null;
+// Firebase Cloud Sync handlers
+ipcMain.handle('firebase-get-status', () => {
+  if (!firebaseSyncAdapter) {
+    return { user: null, syncing: false };
+  }
+  return {
+    user: firebaseSyncAdapter.getCurrentUser(),
+    syncing: firebaseSyncAdapter.isSyncing
+  };
+});
+
+ipcMain.handle('firebase-login', async (event, email, password) => {
+  console.log('[Main] firebase-login called with email:', email);
+
+  if (!firebaseSyncAdapter) {
+    console.log('[Main] firebaseSyncAdapter is null');
+    return { success: false, error: 'Firebase not initialized' };
+  }
+
+  console.log('[Main] Calling signIn...');
+  const result = await firebaseSyncAdapter.signIn(email, password);
+  console.log('[Main] signIn result:', result);
+
+  if (result.success) {
+    // Check if we need to run migration
+    if (!firebaseSyncAdapter.isMigrationComplete()) {
+      console.log('[Main] Starting migration...');
+      // Run migration in background
+      firebaseSyncAdapter.migrateAllLocalPrompts().then(migrationResult => {
+        console.log('[Main] Migration result:', migrationResult);
+      });
+    }
+  }
+
+  return result;
+});
+
+ipcMain.handle('firebase-logout', async () => {
+  if (!firebaseSyncAdapter) {
+    return { success: false, error: 'Firebase not initialized' };
+  }
+
+  await firebaseSyncAdapter.signOut();
+  return { success: true };
+});
+
 ipcMain.on('open-settings', () => {
   if (settingsView) {
     closeSettings();
@@ -1245,7 +1434,14 @@ ipcMain.handle('prompt-library-create', async (event, { terminalId, prompt }) =>
   const cwd = store.get(`tabData.${terminalId}.cwd`);
   if (!cwd) return null;
   try {
-    return await promptLibraryManager.createPrompt(cwd, prompt);
+    const createdPrompt = await promptLibraryManager.createPrompt(cwd, prompt);
+    // Sync to Firebase
+    if (firebaseSyncAdapter && createdPrompt) {
+      firebaseSyncAdapter.pushPromptToFirebase(cwd, createdPrompt).catch(err => {
+        console.error('Failed to sync created prompt to Firebase:', err);
+      });
+    }
+    return createdPrompt;
   } catch (err) {
     console.error('Failed to create prompt:', err);
     return { error: err.message };
@@ -1268,7 +1464,14 @@ ipcMain.handle('prompt-library-update', async (event, { terminalId, promptId, up
         }
       }
     }
-    return await promptLibraryManager.updatePrompt(cwd, promptId, updates);
+    const updatedPrompt = await promptLibraryManager.updatePrompt(cwd, promptId, updates);
+    // Sync to Firebase
+    if (firebaseSyncAdapter && updatedPrompt) {
+      firebaseSyncAdapter.pushPromptToFirebase(cwd, updatedPrompt).catch(err => {
+        console.error('Failed to sync updated prompt to Firebase:', err);
+      });
+    }
+    return updatedPrompt;
   } catch (err) {
     console.error('Failed to update prompt:', err);
     return { error: err.message };
@@ -1285,7 +1488,14 @@ ipcMain.handle('prompt-library-delete', async (event, { terminalId, promptId }) 
     if (prompt && prompt.images && promptImageManager) {
       await promptImageManager.removeImages(prompt.images);
     }
-    return await promptLibraryManager.deletePrompt(cwd, promptId);
+    const deleted = await promptLibraryManager.deletePrompt(cwd, promptId);
+    // Sync deletion to Firebase
+    if (deleted && firebaseSyncAdapter) {
+      firebaseSyncAdapter.deleteRemotePrompt(promptId).catch(err => {
+        console.error('Failed to sync prompt deletion to Firebase:', err);
+      });
+    }
+    return deleted;
   } catch (err) {
     console.error('Failed to delete prompt:', err);
     return false;
@@ -1297,7 +1507,14 @@ ipcMain.handle('prompt-library-duplicate', async (event, { terminalId, promptId 
   const cwd = store.get(`tabData.${terminalId}.cwd`);
   if (!cwd) return null;
   try {
-    return await promptLibraryManager.duplicatePrompt(cwd, promptId);
+    const duplicatedPrompt = await promptLibraryManager.duplicatePrompt(cwd, promptId);
+    // Sync to Firebase
+    if (firebaseSyncAdapter && duplicatedPrompt) {
+      firebaseSyncAdapter.pushPromptToFirebase(cwd, duplicatedPrompt).catch(err => {
+        console.error('Failed to sync duplicated prompt to Firebase:', err);
+      });
+    }
+    return duplicatedPrompt;
   } catch (err) {
     console.error('Failed to duplicate prompt:', err);
     return { error: err.message };
@@ -1309,7 +1526,17 @@ ipcMain.handle('prompt-library-reorder', async (event, { terminalId, promptIds, 
   const cwd = store.get(`tabData.${terminalId}.cwd`);
   if (!cwd) return false;
   try {
-    return await promptLibraryManager.reorderPrompts(cwd, promptIds, scope || 'project');
+    const result = await promptLibraryManager.reorderPrompts(cwd, promptIds, scope || 'project');
+    // Sync all reordered prompts to Firebase
+    if (result && firebaseSyncAdapter) {
+      const prompts = promptLibraryManager.getPromptsForCwd(cwd);
+      for (const prompt of prompts) {
+        firebaseSyncAdapter.pushPromptToFirebase(cwd, prompt).catch(err => {
+          console.error('Failed to sync reordered prompt to Firebase:', err);
+        });
+      }
+    }
+    return result;
   } catch (err) {
     console.error('Failed to reorder prompts:', err);
     return false;
@@ -1321,7 +1548,14 @@ ipcMain.handle('prompt-library-toggle-reusable', async (event, { terminalId, pro
   const cwd = store.get(`tabData.${terminalId}.cwd`);
   if (!cwd) return null;
   try {
-    return await promptLibraryManager.toggleReusable(cwd, promptId);
+    const updatedPrompt = await promptLibraryManager.toggleReusable(cwd, promptId);
+    // Sync to Firebase
+    if (firebaseSyncAdapter && updatedPrompt) {
+      firebaseSyncAdapter.pushPromptToFirebase(cwd, updatedPrompt).catch(err => {
+        console.error('Failed to sync toggled reusable to Firebase:', err);
+      });
+    }
+    return updatedPrompt;
   } catch (err) {
     console.error('Failed to toggle reusable:', err);
     return null;
@@ -1333,7 +1567,14 @@ ipcMain.handle('prompt-library-toggle-favorite', async (event, { terminalId, pro
   const cwd = store.get(`tabData.${terminalId}.cwd`);
   if (!cwd) return null;
   try {
-    return await promptLibraryManager.toggleFavorite(cwd, promptId);
+    const updatedPrompt = await promptLibraryManager.toggleFavorite(cwd, promptId);
+    // Sync to Firebase
+    if (firebaseSyncAdapter && updatedPrompt) {
+      firebaseSyncAdapter.pushPromptToFirebase(cwd, updatedPrompt).catch(err => {
+        console.error('Failed to sync toggled favorite to Firebase:', err);
+      });
+    }
+    return updatedPrompt;
   } catch (err) {
     console.error('Failed to toggle favorite:', err);
     return null;
@@ -1345,7 +1586,14 @@ ipcMain.handle('prompt-library-mark-done', async (event, { terminalId, promptId 
   const cwd = store.get(`tabData.${terminalId}.cwd`);
   if (!cwd) return null;
   try {
-    return await promptLibraryManager.markAsDone(cwd, promptId);
+    const updatedPrompt = await promptLibraryManager.markAsDone(cwd, promptId);
+    // Sync to Firebase
+    if (firebaseSyncAdapter && updatedPrompt) {
+      firebaseSyncAdapter.pushPromptToFirebase(cwd, updatedPrompt).catch(err => {
+        console.error('Failed to sync mark done to Firebase:', err);
+      });
+    }
+    return updatedPrompt;
   } catch (err) {
     console.error('Failed to mark prompt done:', err);
     return null;
@@ -1357,7 +1605,14 @@ ipcMain.handle('prompt-library-mark-testing', async (event, { terminalId, prompt
   const cwd = store.get(`tabData.${terminalId}.cwd`);
   if (!cwd) return null;
   try {
-    return await promptLibraryManager.markAsTesting(cwd, promptId);
+    const updatedPrompt = await promptLibraryManager.markAsTesting(cwd, promptId);
+    // Sync to Firebase
+    if (firebaseSyncAdapter && updatedPrompt) {
+      firebaseSyncAdapter.pushPromptToFirebase(cwd, updatedPrompt).catch(err => {
+        console.error('Failed to sync mark testing to Firebase:', err);
+      });
+    }
+    return updatedPrompt;
   } catch (err) {
     console.error('Failed to mark prompt testing:', err);
     return null;
@@ -1369,7 +1624,14 @@ ipcMain.handle('prompt-library-restore', async (event, { terminalId, promptId })
   const cwd = store.get(`tabData.${terminalId}.cwd`);
   if (!cwd) return null;
   try {
-    return await promptLibraryManager.restorePrompt(cwd, promptId);
+    const updatedPrompt = await promptLibraryManager.restorePrompt(cwd, promptId);
+    // Sync to Firebase
+    if (firebaseSyncAdapter && updatedPrompt) {
+      firebaseSyncAdapter.pushPromptToFirebase(cwd, updatedPrompt).catch(err => {
+        console.error('Failed to sync restored prompt to Firebase:', err);
+      });
+    }
+    return updatedPrompt;
   } catch (err) {
     console.error('Failed to restore prompt:', err);
     return null;
@@ -1381,16 +1643,28 @@ ipcMain.handle('prompt-library-clear-done', async (event, { terminalId }) => {
   const cwd = store.get(`tabData.${terminalId}.cwd`);
   if (!cwd) return 0;
   try {
-    // Get done prompts first to clean up images
+    // Get done prompts first to clean up images and sync deletions
+    const prompts = promptLibraryManager.getPromptsForCwd(cwd);
+    const donePrompts = prompts.filter(p => p.done);
+
+    // Clean up images
     if (promptImageManager) {
-      const prompts = promptLibraryManager.getPromptsForCwd(cwd);
-      const donePrompts = prompts.filter(p => p.done);
       for (const prompt of donePrompts) {
         if (prompt.images) {
           await promptImageManager.removeImages(prompt.images);
         }
       }
     }
+
+    // Sync deletions to Firebase
+    if (firebaseSyncAdapter) {
+      for (const prompt of donePrompts) {
+        firebaseSyncAdapter.deleteRemotePrompt(prompt.id).catch(err => {
+          console.error('Failed to sync cleared prompt deletion to Firebase:', err);
+        });
+      }
+    }
+
     return await promptLibraryManager.clearDonePrompts(cwd);
   } catch (err) {
     console.error('Failed to clear done prompts:', err);

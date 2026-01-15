@@ -13,5 +13,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Terminal themes
   getTerminalTheme: () => ipcRenderer.invoke('get-terminal-theme'),
-  getAllTerminalThemes: () => ipcRenderer.invoke('get-all-terminal-themes')
+  getAllTerminalThemes: () => ipcRenderer.invoke('get-all-terminal-themes'),
+
+  // Firebase Cloud Sync
+  getFirebaseStatus: () => ipcRenderer.invoke('firebase-get-status'),
+  firebaseLogin: (email, password) => ipcRenderer.invoke('firebase-login', email, password),
+  firebaseLogout: () => ipcRenderer.invoke('firebase-logout'),
+  onFirebaseSyncStatus: (callback) => {
+    ipcRenderer.on('firebase-sync-status', (event, status) => callback(status));
+  }
 });

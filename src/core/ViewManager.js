@@ -68,8 +68,9 @@ class ViewManager {
    * @param {Function} options.onTerminalComplete - Callback when terminal task completes (tabId, message)
    * @param {HistoryManager} options.historyManager - Optional history manager for session recording
    * @param {HooksManager} options.hooksManager - Optional hooks manager for Claude Code hooks
+   * @param {FirebaseSyncAdapter} options.firebaseSyncAdapter - Optional Firebase sync adapter
    */
-  constructor({ mainWindow, store, getSidebarWidth, onTabsChanged, onTerminalComplete, historyManager, hooksManager }) {
+  constructor({ mainWindow, store, getSidebarWidth, onTabsChanged, onTerminalComplete, historyManager, hooksManager, firebaseSyncAdapter }) {
     this.mainWindow = mainWindow;
     this.store = store;
     this.getSidebarWidth = getSidebarWidth || (() => DEFAULT_SIDEBAR_WIDTH);
@@ -77,6 +78,7 @@ class ViewManager {
     this.onTerminalComplete = onTerminalComplete;
     this.historyManager = historyManager;
     this.hooksManager = hooksManager;
+    this.firebaseSyncAdapter = firebaseSyncAdapter;
 
     // View storage
     this.webViews = new Map();      // tabId -> BrowserView
@@ -177,6 +179,15 @@ class ViewManager {
 
     // Normalize the cwd path for comparison
     const normalizedCwd = cwd.replace(/\/+$/, ''); // Remove trailing slashes
+
+    // Debug: log what we're searching through
+    const terminalViewIds = Array.from(this.terminalViews.keys());
+    const cwdsInViews = terminalViewIds.map(id => ({
+      id,
+      cwd: this.store.get(`tabData.${id}.cwd`)
+    }));
+    console.log('[ViewManager] _getTabIdForCwd looking for:', normalizedCwd);
+    console.log('[ViewManager] terminalViews has:', cwdsInViews);
 
     for (const [tabId] of this.terminalViews) {
       const tabCwd = this.store.get(`tabData.${tabId}.cwd`);
@@ -527,6 +538,13 @@ class ViewManager {
         if (sessionId) {
           this.terminalSessions.set(tabId, sessionId);
         }
+      }
+
+      // Update project info in Firebase (for folder name resolution)
+      if (this.firebaseSyncAdapter) {
+        this.firebaseSyncAdapter.updateProjectInfo(cwd).catch(err => {
+          console.warn('[ViewManager] Failed to update Firebase project info:', err);
+        });
       }
 
       // Forward PTY output

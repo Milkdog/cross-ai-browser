@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'">
   <title>Settings</title>
   <style>
     * {
@@ -231,6 +231,87 @@
     .preview-yellow {
       color: #dcdcaa;
     }
+
+    /* Input field */
+    .settings-input {
+      width: 100%;
+      padding: 8px 10px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 6px;
+      color: rgba(255, 255, 255, 0.9);
+      font-size: 12px;
+      outline: none;
+    }
+
+    .settings-input:hover {
+      background: rgba(255, 255, 255, 0.12);
+    }
+
+    .settings-input:focus {
+      border-color: #6366f1;
+    }
+
+    .settings-input::placeholder {
+      color: rgba(255, 255, 255, 0.3);
+    }
+
+    /* Primary button */
+    .action-btn.primary {
+      background: #6366f1;
+      border-color: #6366f1;
+      color: white;
+    }
+
+    .action-btn.primary:hover {
+      background: #5558e3;
+      border-color: #5558e3;
+    }
+
+    .action-btn.primary:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* Error message */
+    .error-message {
+      color: #ef4444;
+      font-size: 11px;
+      padding: 6px 8px;
+      background: rgba(239, 68, 68, 0.1);
+      border-radius: 4px;
+    }
+
+    /* User info */
+    .user-info {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .user-email {
+      color: rgba(255, 255, 255, 0.9);
+      font-size: 12px;
+    }
+
+    .sync-status {
+      color: rgba(255, 255, 255, 0.5);
+      font-size: 11px;
+    }
+
+    .sync-status.syncing {
+      color: #6366f1;
+    }
+
+    .sync-status.success {
+      color: #22c55e;
+    }
+
+    /* Hint text */
+    .settings-hint {
+      color: rgba(255, 255, 255, 0.4);
+      font-size: 10px;
+    }
   </style>
 </head>
 <body>
@@ -293,6 +374,44 @@
           <div class="preview-line"><span class="preview-prompt">$</span> <span class="preview-cmd">claude</span></div>
           <div class="preview-line"><span class="preview-text">Hello! How can I help?</span></div>
           <div class="preview-line"><span class="preview-green">Success</span> <span class="preview-red">Error</span> <span class="preview-yellow">Warning</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <div class="section-title">Cloud Sync</div>
+
+      <!-- Logged out state -->
+      <div id="firebase-logged-out">
+        <div class="settings-group">
+          <label class="settings-label">Email</label>
+          <input type="email" id="firebase-email" class="settings-input" placeholder="you@example.com">
+        </div>
+        <div class="settings-group">
+          <label class="settings-label">Password</label>
+          <input type="password" id="firebase-password" class="settings-input" placeholder="••••••••">
+        </div>
+        <div class="settings-group">
+          <div id="firebase-error" class="error-message" style="display: none;"></div>
+        </div>
+        <div class="settings-group">
+          <button class="action-btn primary" id="firebase-login-btn">Sign In</button>
+        </div>
+        <div class="settings-group">
+          <span class="settings-hint">Sign in to sync prompts across devices</span>
+        </div>
+      </div>
+
+      <!-- Logged in state -->
+      <div id="firebase-logged-in" style="display: none;">
+        <div class="settings-group">
+          <div class="user-info">
+            <span class="user-email" id="firebase-user-email"></span>
+            <span class="sync-status" id="firebase-sync-status"></span>
+          </div>
+        </div>
+        <div class="settings-group">
+          <button class="action-btn danger" id="firebase-logout-btn">Sign Out</button>
         </div>
       </div>
     </div>
@@ -421,6 +540,113 @@
         window.electronAPI.closeSettings();
       }
     });
+
+    // Firebase Cloud Sync
+    const firebaseLoggedOut = document.getElementById('firebase-logged-out');
+    const firebaseLoggedIn = document.getElementById('firebase-logged-in');
+    const firebaseEmail = document.getElementById('firebase-email');
+    const firebasePassword = document.getElementById('firebase-password');
+    const firebaseLoginBtn = document.getElementById('firebase-login-btn');
+    const firebaseLogoutBtn = document.getElementById('firebase-logout-btn');
+    const firebaseUserEmail = document.getElementById('firebase-user-email');
+    const firebaseSyncStatus = document.getElementById('firebase-sync-status');
+    const firebaseError = document.getElementById('firebase-error');
+
+    async function loadFirebaseStatus() {
+      try {
+        const status = await window.electronAPI.getFirebaseStatus();
+        updateFirebaseUI(status);
+      } catch (e) {
+        console.error('Failed to load Firebase status:', e);
+      }
+    }
+
+    function updateFirebaseUI(status) {
+      if (status && status.user) {
+        firebaseLoggedOut.style.display = 'none';
+        firebaseLoggedIn.style.display = 'block';
+        firebaseUserEmail.textContent = status.user.email;
+        firebaseSyncStatus.textContent = status.syncing ? 'Syncing...' : 'Synced';
+        firebaseSyncStatus.className = 'sync-status ' + (status.syncing ? 'syncing' : 'success');
+      } else {
+        firebaseLoggedOut.style.display = 'block';
+        firebaseLoggedIn.style.display = 'none';
+      }
+    }
+
+    firebaseLoginBtn.onclick = async () => {
+      console.log('[Settings] Login button clicked');
+      // Immediate visual feedback
+      firebaseLoginBtn.textContent = 'Clicked!';
+
+      const email = firebaseEmail.value.trim();
+      const password = firebasePassword.value;
+
+      console.log('[Settings] Email:', email, 'Password length:', password.length);
+
+      if (!email || !password) {
+        firebaseError.textContent = 'Please enter email and password';
+        firebaseError.style.display = 'block';
+        firebaseLoginBtn.textContent = 'Sign In';
+        return;
+      }
+
+      firebaseError.style.display = 'none';
+      firebaseLoginBtn.disabled = true;
+      firebaseLoginBtn.textContent = 'Signing in...';
+
+      try {
+        console.log('[Settings] Calling firebaseLogin...');
+        const result = await window.electronAPI.firebaseLogin(email, password);
+        console.log('[Settings] Login result:', result);
+        if (result.success) {
+          firebasePassword.value = '';
+          updateFirebaseUI({ user: result.user, syncing: true });
+          // Migration will happen automatically on login
+          firebaseSyncStatus.textContent = 'Migrating prompts...';
+          firebaseSyncStatus.className = 'sync-status syncing';
+        } else {
+          firebaseError.textContent = result.error || 'Login failed';
+          firebaseError.style.display = 'block';
+        }
+      } catch (e) {
+        console.error('[Settings] Login error:', e);
+        firebaseError.textContent = e.message || 'Login failed';
+        firebaseError.style.display = 'block';
+      } finally {
+        firebaseLoginBtn.disabled = false;
+        firebaseLoginBtn.textContent = 'Sign In';
+      }
+    };
+
+    firebaseLogoutBtn.onclick = async () => {
+      try {
+        await window.electronAPI.firebaseLogout();
+        updateFirebaseUI({ user: null });
+      } catch (e) {
+        console.error('Logout failed:', e);
+      }
+    };
+
+    // Allow Enter key to submit login form
+    firebasePassword.onkeydown = (e) => {
+      if (e.key === 'Enter') {
+        firebaseLoginBtn.click();
+      }
+    };
+
+    // Listen for sync status updates
+    window.electronAPI.onFirebaseSyncStatus((status) => {
+      if (status.type === 'migration-complete') {
+        firebaseSyncStatus.textContent = `Synced (${status.promptCount} prompts)`;
+        firebaseSyncStatus.className = 'sync-status success';
+      } else if (status.type === 'syncing') {
+        firebaseSyncStatus.textContent = 'Syncing...';
+        firebaseSyncStatus.className = 'sync-status syncing';
+      }
+    });
+
+    loadFirebaseStatus();
   </script>
 </body>
 </html>

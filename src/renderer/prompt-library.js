@@ -586,6 +586,17 @@ class PromptLibrary {
   }
 
   /**
+   * Get all unique labels from existing prompts
+   */
+  getAllLabels() {
+    const labelSet = new Set();
+    this.prompts.forEach(prompt => {
+      (prompt.labels || []).forEach(label => labelSet.add(label));
+    });
+    return Array.from(labelSet).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+  }
+
+  /**
    * Filter prompts based on search query
    */
   filterPrompts(prompts) {
@@ -1343,11 +1354,14 @@ class PromptLibrary {
     header.appendChild(headerTitle);
     header.appendChild(closeBtn);
 
-    // Body
+    // Body - two column layout
     const body = document.createElement('div');
     body.className = 'prompt-modal-body';
 
-    // Prompt field (primary, required)
+    // Left column - Prompt textarea
+    const leftColumn = document.createElement('div');
+    leftColumn.className = 'prompt-modal-left';
+
     const promptGroup = document.createElement('div');
     promptGroup.className = 'prompt-form-group';
 
@@ -1364,6 +1378,11 @@ class PromptLibrary {
 
     promptGroup.appendChild(promptLabel);
     promptGroup.appendChild(promptInput);
+    leftColumn.appendChild(promptGroup);
+
+    // Right column - Metadata sidebar
+    const rightColumn = document.createElement('div');
+    rightColumn.className = 'prompt-modal-right';
 
     // Title field (optional, for display only)
     const titleGroup = document.createElement('div');
@@ -1375,13 +1394,13 @@ class PromptLibrary {
 
     const titleHint = document.createElement('span');
     titleHint.className = 'prompt-form-hint';
-    titleHint.textContent = 'Display name only - not sent to Claude';
+    titleHint.textContent = 'Display name only';
 
     const titleInput = document.createElement('input');
     titleInput.type = 'text';
     titleInput.className = 'prompt-form-input';
     titleInput.id = 'prompt-title-input';
-    titleInput.placeholder = 'Optional display name for the card...';
+    titleInput.placeholder = 'Display name...';
     titleInput.maxLength = 100;
     titleInput.value = promptTitle;
 
@@ -1389,7 +1408,7 @@ class PromptLibrary {
     titleGroup.appendChild(titleHint);
     titleGroup.appendChild(titleInput);
 
-    // Labels input (multi-select tags)
+    // Labels input (multi-select tags) with autocomplete
     const labelsGroup = document.createElement('div');
     labelsGroup.className = 'prompt-form-group';
 
@@ -1403,11 +1422,21 @@ class PromptLibrary {
     const labelsTagsDiv = document.createElement('div');
     labelsTagsDiv.className = 'prompt-labels-tags';
 
+    // Wrapper for input + suggestions dropdown
+    const labelsInputWrapper = document.createElement('div');
+    labelsInputWrapper.className = 'prompt-labels-input-wrapper';
+
     const labelsInput = document.createElement('input');
     labelsInput.type = 'text';
     labelsInput.className = 'prompt-labels-input';
     labelsInput.placeholder = 'Type label and press Enter...';
     labelsInput.maxLength = 30;
+
+    // Suggestions dropdown
+    const suggestionsDropdown = document.createElement('div');
+    suggestionsDropdown.className = 'prompt-labels-suggestions';
+
+    let highlightedIndex = -1;
 
     // Function to render label tags
     const renderLabelTags = () => {
@@ -1430,21 +1459,140 @@ class PromptLibrary {
       });
     };
 
-    // Add label on Enter
-    labelsInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        const newLabel = labelsInput.value.trim();
-        if (newLabel && !currentLabels.includes(newLabel) && currentLabels.length < 5) {
-          currentLabels.push(newLabel);
-          labelsInput.value = '';
-          renderLabelTags();
+    // Get filtered suggestions based on input
+    const getFilteredSuggestions = (query) => {
+      const allLabels = this.getAllLabels();
+      const q = query.toLowerCase();
+      return allLabels.filter(label =>
+        label.toLowerCase().includes(q) && !currentLabels.includes(label)
+      );
+    };
+
+    // Render suggestions dropdown
+    const renderSuggestions = (suggestions) => {
+      suggestionsDropdown.textContent = '';
+      highlightedIndex = -1;
+
+      if (suggestions.length === 0) {
+        suggestionsDropdown.classList.remove('visible');
+        return;
+      }
+
+      suggestions.forEach((label, index) => {
+        const item = document.createElement('div');
+        item.className = 'prompt-labels-suggestion';
+        item.dataset.index = index;
+
+        // Highlight matching part
+        const query = labelsInput.value.trim().toLowerCase();
+        const labelLower = label.toLowerCase();
+        const matchStart = labelLower.indexOf(query);
+
+        if (matchStart >= 0 && query) {
+          const before = label.slice(0, matchStart);
+          const match = label.slice(matchStart, matchStart + query.length);
+          const after = label.slice(matchStart + query.length);
+
+          if (before) item.appendChild(document.createTextNode(before));
+          const matchSpan = document.createElement('span');
+          matchSpan.className = 'match';
+          matchSpan.textContent = match;
+          item.appendChild(matchSpan);
+          if (after) item.appendChild(document.createTextNode(after));
+        } else {
+          item.textContent = label;
         }
+
+        item.addEventListener('mousedown', (e) => {
+          e.preventDefault(); // Prevent blur before click registers
+          addLabel(label);
+        });
+
+        suggestionsDropdown.appendChild(item);
+      });
+
+      suggestionsDropdown.classList.add('visible');
+    };
+
+    // Update highlighted suggestion
+    const updateHighlight = (suggestions) => {
+      const items = suggestionsDropdown.querySelectorAll('.prompt-labels-suggestion');
+      items.forEach((item, index) => {
+        item.classList.toggle('highlighted', index === highlightedIndex);
+      });
+      // Scroll highlighted item into view
+      if (highlightedIndex >= 0 && items[highlightedIndex]) {
+        items[highlightedIndex].scrollIntoView({ block: 'nearest' });
+      }
+    };
+
+    // Add a label and reset input
+    const addLabel = (label) => {
+      if (label && !currentLabels.includes(label) && currentLabels.length < 5) {
+        currentLabels.push(label);
+        labelsInput.value = '';
+        suggestionsDropdown.classList.remove('visible');
+        renderLabelTags();
+      }
+    };
+
+    // Handle input for autocomplete
+    labelsInput.addEventListener('input', () => {
+      const query = labelsInput.value.trim();
+      if (query) {
+        const suggestions = getFilteredSuggestions(query);
+        renderSuggestions(suggestions);
+      } else {
+        suggestionsDropdown.classList.remove('visible');
       }
     });
 
+    // Handle keyboard navigation
+    labelsInput.addEventListener('keydown', (e) => {
+      const suggestions = getFilteredSuggestions(labelsInput.value.trim());
+      const isDropdownVisible = suggestionsDropdown.classList.contains('visible');
+
+      if (e.key === 'ArrowDown' && isDropdownVisible) {
+        e.preventDefault();
+        highlightedIndex = Math.min(highlightedIndex + 1, suggestions.length - 1);
+        updateHighlight(suggestions);
+      } else if (e.key === 'ArrowUp' && isDropdownVisible) {
+        e.preventDefault();
+        highlightedIndex = Math.max(highlightedIndex - 1, 0);
+        updateHighlight(suggestions);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (isDropdownVisible && highlightedIndex >= 0 && suggestions[highlightedIndex]) {
+          addLabel(suggestions[highlightedIndex]);
+        } else {
+          addLabel(labelsInput.value.trim());
+        }
+      } else if (e.key === 'Escape') {
+        suggestionsDropdown.classList.remove('visible');
+      }
+    });
+
+    // Hide suggestions on blur (with delay to allow click)
+    labelsInput.addEventListener('blur', () => {
+      setTimeout(() => {
+        suggestionsDropdown.classList.remove('visible');
+      }, 150);
+    });
+
+    // Show suggestions on focus if there's input
+    labelsInput.addEventListener('focus', () => {
+      const query = labelsInput.value.trim();
+      if (query) {
+        const suggestions = getFilteredSuggestions(query);
+        renderSuggestions(suggestions);
+      }
+    });
+
+    labelsInputWrapper.appendChild(labelsInput);
+    labelsInputWrapper.appendChild(suggestionsDropdown);
+
     labelsContainer.appendChild(labelsTagsDiv);
-    labelsContainer.appendChild(labelsInput);
+    labelsContainer.appendChild(labelsInputWrapper);
 
     labelsGroup.appendChild(labelsLabel);
     labelsGroup.appendChild(labelsContainer);
@@ -1719,11 +1867,15 @@ class PromptLibrary {
     optionsRow.appendChild(favoriteGroup);
     optionsRow.appendChild(scopeGroup);
 
-    body.appendChild(promptGroup);
-    body.appendChild(titleGroup);
-    body.appendChild(labelsGroup);
-    body.appendChild(imagesGroup);
-    body.appendChild(optionsRow);
+    // Append to right column
+    rightColumn.appendChild(titleGroup);
+    rightColumn.appendChild(labelsGroup);
+    rightColumn.appendChild(imagesGroup);
+    rightColumn.appendChild(optionsRow);
+
+    // Append columns to body
+    body.appendChild(leftColumn);
+    body.appendChild(rightColumn);
 
     // Footer
     const footer = document.createElement('div');
@@ -1755,13 +1907,6 @@ class PromptLibrary {
     // Event listeners
     closeBtn.addEventListener('click', () => this.closeModal());
     cancelBtn.addEventListener('click', () => this.closeModal());
-
-    // Click outside to close
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) {
-        this.closeModal();
-      }
-    });
 
     // Save button
     saveBtn.addEventListener('click', async () => {

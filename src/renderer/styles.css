@@ -143,6 +143,15 @@ body {
   white-space: nowrap;
 }
 
+/* Terminal stopped state - PTY not running */
+.service-btn.terminal-stopped {
+  opacity: 0.5;
+}
+
+.service-btn.terminal-stopped .tab-name {
+  font-style: italic;
+}
+
 /* Completion badge - shows when tab has unread completion */
 .completion-badge {
   width: 8px;
@@ -342,7 +351,10 @@ body {
   color: var(--color-text-secondary);
 }
 
-
+.control-btn.active {
+  background: var(--color-primary-muted);
+  color: var(--color-primary-base);
+}
 
 /* Settings Popover */
 .settings-popover {

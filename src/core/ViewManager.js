@@ -307,6 +307,19 @@ class ViewManager {
   }
 
   /**
+   * Send terminal running state to sidebar
+   * @private
+   */
+  _sendTerminalRunningState(tabId, isRunning) {
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.webContents.send('terminal-running-state-changed', {
+        tabId,
+        isRunning
+      });
+    }
+  }
+
+  /**
    * Ensure hooks are installed (called on first terminal spawn)
    * @private
    */
@@ -535,6 +548,9 @@ class ViewManager {
 
       this.terminalPtys.set(tabId, ptyProcess);
 
+      // Notify sidebar that terminal is running
+      this._sendTerminalRunningState(tabId, true);
+
       // Ensure Claude Code hooks are installed (on first terminal spawn)
       this._ensureHooksInstalled();
 
@@ -633,6 +649,9 @@ class ViewManager {
     }
 
     this.terminalPtys.delete(tabId);
+
+    // Notify sidebar that terminal stopped
+    this._sendTerminalRunningState(tabId, false);
   }
 
   /**
@@ -1044,6 +1063,14 @@ class ViewManager {
   }
 
   /**
+   * Get list of terminal tab IDs with running PTY processes
+   * @returns {string[]}
+   */
+  getRunningTerminals() {
+    return Array.from(this.terminalPtys.keys());
+  }
+
+  /**
    * Check if a view exists for a tab
    * @param {string} tabId
    * @returns {boolean}
@@ -1194,6 +1221,42 @@ class ViewManager {
     } else if (terminalView) {
       terminalView.webContents.focus();
     }
+  }
+
+  /**
+   * Hide the active view (remove from window but keep reference)
+   * Used when showing settings or other overlays
+   */
+  hideActiveView() {
+    if (!this.activeTabId) return;
+
+    const webView = this.webViews.get(this.activeTabId);
+    const terminalView = this.terminalViews.get(this.activeTabId);
+
+    if (webView) {
+      this.mainWindow.removeBrowserView(webView);
+    } else if (terminalView) {
+      this.mainWindow.removeBrowserView(terminalView);
+    }
+  }
+
+  /**
+   * Show the active view (add back to window)
+   * Used when hiding settings or other overlays
+   */
+  showActiveView() {
+    if (!this.activeTabId) return;
+
+    const webView = this.webViews.get(this.activeTabId);
+    const terminalView = this.terminalViews.get(this.activeTabId);
+
+    if (webView) {
+      this.mainWindow.addBrowserView(webView);
+    } else if (terminalView) {
+      this.mainWindow.addBrowserView(terminalView);
+    }
+
+    this.updateViewBounds();
   }
 
   /**

@@ -98,6 +98,7 @@ let promptLibraryManager = null;
 let promptImageManager = null;
 let firebaseSyncAdapter = null;
 let settingsView = null;
+let settingsActive = false;
 let servicePickerWindow = null;
 
 // Track tabs with unread completions (for badge display)
@@ -483,6 +484,16 @@ function createWindow() {
   // Handle window resize
   mainWindow.on('resize', () => {
     viewManager.updateViewBounds();
+    // Also resize settings view if open
+    if (settingsView) {
+      const [width, height] = mainWindow.getContentSize();
+      settingsView.setBounds({
+        x: SIDEBAR_WIDTH,
+        y: 0,
+        width: width - SIDEBAR_WIDTH,
+        height: height
+      });
+    }
   });
 
   // Auto-focus the active view when window gains focus
@@ -576,6 +587,13 @@ function getTabsForRenderer() {
 function switchToTab(tabId) {
   const tab = tabManager.getTab(tabId);
   if (!tab) return;
+
+  // Hide settings view if it's active
+  if (settingsActive && settingsView) {
+    mainWindow.removeBrowserView(settingsView);
+    settingsActive = false;
+    mainWindow.webContents.send('settings-active-changed', false);
+  }
 
   // Ensure view exists
   if (!viewManager.hasView(tabId)) {
@@ -836,6 +854,10 @@ ipcMain.handle('get-completion-badges', () => {
   return Array.from(tabsWithCompletions);
 });
 
+ipcMain.handle('get-running-terminals', () => {
+  return viewManager.getRunningTerminals();
+});
+
 ipcMain.on('reload-service', (event, tabId) => {
   const tab = tabManager.getTab(tabId);
   if (!tab) return;
@@ -936,20 +958,28 @@ ipcMain.handle('firebase-logout', async () => {
 });
 
 ipcMain.on('open-settings', () => {
-  if (settingsView) {
-    closeSettings();
+  // If settings is already active, do nothing (it's already shown)
+  if (settingsActive) {
     return;
   }
 
-  settingsView = new BrowserView({
-    webPreferences: {
-      preload: path.join(__dirname, 'settings-preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true
-    }
-  });
+  // Create settings view if it doesn't exist
+  if (!settingsView) {
+    settingsView = new BrowserView({
+      webPreferences: {
+        preload: path.join(__dirname, 'settings-preload.js'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true
+      }
+    });
+    settingsView.webContents.loadFile(path.join(__dirname, 'renderer', 'settings.html'));
+  }
 
+  // Hide the current active tab view
+  viewManager.hideActiveView();
+
+  // Show settings view
   mainWindow.addBrowserView(settingsView);
 
   // Position to fill content area (right of sidebar)
@@ -961,14 +991,36 @@ ipcMain.on('open-settings', () => {
     height: windowHeight
   });
 
-  settingsView.webContents.loadFile(path.join(__dirname, 'renderer', 'settings.html'));
+  settingsActive = true;
+
+  // Update window title
+  mainWindow.setTitle('Settings - Cross AI Browser');
+
+  // Notify sidebar
+  mainWindow.webContents.send('settings-active-changed', true);
 });
 
 function closeSettings() {
-  if (settingsView && mainWindow) {
-    mainWindow.removeBrowserView(settingsView);
-    settingsView = null;
+  if (!settingsActive || !settingsView || !mainWindow) return;
+
+  // Hide settings view (but don't destroy it)
+  mainWindow.removeBrowserView(settingsView);
+  settingsActive = false;
+
+  // Show the previously active tab
+  viewManager.showActiveView();
+
+  // Update window title to active tab
+  const activeTabId = viewManager.getActiveTabId();
+  if (activeTabId) {
+    const tab = tabManager.getTab(activeTabId);
+    if (tab) {
+      mainWindow.setTitle(`${tab.name} - Cross AI Browser`);
+    }
   }
+
+  // Notify sidebar
+  mainWindow.webContents.send('settings-active-changed', false);
 }
 
 ipcMain.on('close-settings', () => {
@@ -1088,13 +1140,23 @@ ipcMain.handle('show-tab-context-menu', async (event, tabId) => {
       {
         label: 'Rename',
         click: () => resolve('rename')
-      },
-      { type: 'separator' },
-      {
-        label: 'Close Tab',
-        click: () => resolve('close')
       }
     ];
+
+    // Add Restart Claude option for terminal tabs
+    if (tab.type === 'claude-code') {
+      template.push({ type: 'separator' });
+      template.push({
+        label: 'Restart Claude',
+        click: () => resolve('restart')
+      });
+    }
+
+    template.push({ type: 'separator' });
+    template.push({
+      label: 'Close Tab',
+      click: () => resolve('close')
+    });
 
     const menu = Menu.buildFromTemplate(template);
     menu.popup({
@@ -1676,6 +1738,11 @@ ipcMain.handle('prompt-library-clear-done', async (event, { terminalId }) => {
 ipcMain.handle('prompt-library-get-labels', () => {
   if (!promptLibraryManager) return [];
   return promptLibraryManager.getLabels();
+});
+
+ipcMain.handle('prompt-library-get-label-colors', () => {
+  if (!promptLibraryManager) return {};
+  return promptLibraryManager.getLabelColors();
 });
 
 ipcMain.handle('prompt-library-add-label', async (event, { name }) => {

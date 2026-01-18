@@ -7,6 +7,7 @@ let historySessions = [];
 let historyExpanded = false;
 let tabsWithCompletions = new Set();
 let tabsStreaming = new Map(); // tabId -> { isStreaming, taskDescription }
+let terminalsRunning = new Set(); // tabIds of terminals with active PTY
 
 // Service icons (duplicated from ServiceRegistry for renderer)
 const SERVICE_ICONS = {
@@ -29,6 +30,7 @@ const SERVICE_ICONS = {
 let activeTabId = null;
 let allTabs = [];
 let draggedTabId = null;
+let settingsActive = false;
 
 async function init() {
   console.log('init() called');
@@ -41,7 +43,7 @@ async function init() {
 
   // Set initial active state
   activeTabId = await window.electronAPI.getActiveService();
-  updateActiveState(activeTabId);
+  updateActiveState();
 
   // Load initial downloads
   const initialDownloads = await window.electronAPI.getDownloads();
@@ -52,14 +54,21 @@ async function init() {
   // Listen for active service changes
   window.electronAPI.onActiveServiceChanged((tabId) => {
     activeTabId = tabId;
-    updateActiveState(tabId);
+    settingsActive = false;
+    updateActiveState();
+  });
+
+  // Listen for settings active changes
+  window.electronAPI.onSettingsActiveChanged((isActive) => {
+    settingsActive = isActive;
+    updateActiveState();
   });
 
   // Listen for tab updates
   window.electronAPI.onTabsUpdated((tabs) => {
     allTabs = tabs;
     renderTabs(tabs);
-    updateActiveState(activeTabId);
+    updateActiveState();
   });
 
   // Listen for download updates
@@ -82,6 +91,11 @@ async function init() {
   // Load initial completion badges
   const initialBadges = await window.electronAPI.getCompletionBadges();
   tabsWithCompletions = new Set(initialBadges);
+
+  // Load initial terminal running states
+  const initialRunning = await window.electronAPI.getRunningTerminals();
+  terminalsRunning = new Set(initialRunning);
+
   renderTabs(allTabs);
 
   // Listen for completion badge updates
@@ -97,6 +111,17 @@ async function init() {
       tabsStreaming.set(tabId, { isStreaming, taskDescription });
     } else {
       tabsStreaming.delete(tabId);
+    }
+    renderTabs(allTabs);
+  });
+
+  // Listen for terminal running state changes
+  window.electronAPI.onTerminalRunningStateChanged((data) => {
+    const { tabId, isRunning } = data;
+    if (isRunning) {
+      terminalsRunning.add(tabId);
+    } else {
+      terminalsRunning.delete(tabId);
     }
     renderTabs(allTabs);
   });
@@ -205,6 +230,11 @@ function renderTabs(tabs) {
       btn.classList.add('has-completion');
     }
 
+    // Mark terminal tabs as stopped if PTY is not running
+    if (tab.serviceType === 'claude-code' && !terminalsRunning.has(tab.id)) {
+      btn.classList.add('terminal-stopped');
+    }
+
     // Click handler - switch to tab
     btn.addEventListener('click', () => {
       window.electronAPI.switchService(tab.id);
@@ -216,6 +246,8 @@ function renderTabs(tabs) {
       const action = await window.electronAPI.showTabContextMenu(tab.id);
       if (action === 'rename') {
         window.electronAPI.showRenameDialog(tab.id);
+      } else if (action === 'restart') {
+        window.electronAPI.restartTerminal(tab.id);
       } else if (action === 'close') {
         window.electronAPI.closeTab(tab.id);
       }
@@ -272,10 +304,20 @@ function renderTabs(tabs) {
   });
 }
 
-function updateActiveState(tabId) {
+function updateActiveState() {
+  // Update tab buttons
   document.querySelectorAll('.service-btn').forEach(btn => {
-    btn.classList.toggle('active', btn.dataset.tabId === tabId);
+    // If settings is active, no tab should be active
+    // Otherwise, the activeTabId tab should be active
+    const isActive = !settingsActive && btn.dataset.tabId === activeTabId;
+    btn.classList.toggle('active', isActive);
   });
+
+  // Update settings button
+  const settingsBtn = document.getElementById('settings-btn');
+  if (settingsBtn) {
+    settingsBtn.classList.toggle('active', settingsActive);
+  }
 }
 
 // Keyboard shortcut for reload

@@ -7,6 +7,8 @@ let downloadsUpdatedListener = null;
 let historyUpdatedListener = null;
 let completionBadgesListener = null;
 let streamingStateListener = null;
+let terminalRunningStateListener = null;
+let settingsActiveListener = null;
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Service/Tab management
@@ -26,6 +28,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Legacy terminal support
   addTerminal: () => ipcRenderer.invoke('add-terminal'),
   closeTerminal: (terminalId) => ipcRenderer.send('close-terminal', terminalId),
+  restartTerminal: (terminalId) => ipcRenderer.send('terminal-reload', { terminalId }),
 
   // Navigation controls
   reloadService: (tabId) => ipcRenderer.send('reload-service', tabId),
@@ -65,6 +68,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Completion badges
   getCompletionBadges: () => ipcRenderer.invoke('get-completion-badges'),
+
+  // Terminal running state
+  getRunningTerminals: () => ipcRenderer.invoke('get-running-terminals'),
 
   // Event listeners - with proper cleanup to prevent memory leaks
   onActiveServiceChanged: (callback) => {
@@ -115,6 +121,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('streaming-state-changed', streamingStateListener);
   },
 
+  onTerminalRunningStateChanged: (callback) => {
+    if (terminalRunningStateListener) {
+      ipcRenderer.removeListener('terminal-running-state-changed', terminalRunningStateListener);
+    }
+    terminalRunningStateListener = (event, data) => callback(data);
+    ipcRenderer.on('terminal-running-state-changed', terminalRunningStateListener);
+  },
+
+  onSettingsActiveChanged: (callback) => {
+    if (settingsActiveListener) {
+      ipcRenderer.removeListener('settings-active-changed', settingsActiveListener);
+    }
+    settingsActiveListener = (event, isActive) => callback(isActive);
+    ipcRenderer.on('settings-active-changed', settingsActiveListener);
+  },
+
   // Cleanup method for manual cleanup if needed
   cleanup: () => {
     if (activeServiceListener) {
@@ -141,6 +163,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeListener('streaming-state-changed', streamingStateListener);
       streamingStateListener = null;
     }
+    if (terminalRunningStateListener) {
+      ipcRenderer.removeListener('terminal-running-state-changed', terminalRunningStateListener);
+      terminalRunningStateListener = null;
+    }
+    if (settingsActiveListener) {
+      ipcRenderer.removeListener('settings-active-changed', settingsActiveListener);
+      settingsActiveListener = null;
+    }
   }
 });
 
@@ -163,5 +193,11 @@ window.addEventListener('beforeunload', () => {
   }
   if (streamingStateListener) {
     ipcRenderer.removeListener('streaming-state-changed', streamingStateListener);
+  }
+  if (terminalRunningStateListener) {
+    ipcRenderer.removeListener('terminal-running-state-changed', terminalRunningStateListener);
+  }
+  if (settingsActiveListener) {
+    ipcRenderer.removeListener('settings-active-changed', settingsActiveListener);
   }
 });

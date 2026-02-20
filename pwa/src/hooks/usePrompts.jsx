@@ -56,13 +56,47 @@ export function usePrompts(projectId = null) {
   }, [user]);
 
   // Helper to organize prompts into sections
+  // Order: Reusable -> Regular -> Testing -> Done
+  // Within Reusable: global first, then project, then favorites
   const organizedPrompts = useCallback(() => {
-    const favorites = prompts.filter(p => p.isFavorite && !p.done && !p.testing);
-    const testing = prompts.filter(p => p.testing && !p.done);
-    const active = prompts.filter(p => !p.isFavorite && !p.done && !p.testing);
-    const done = prompts.filter(p => p.done);
+    // Sort helper: favorites first, then by order
+    const sortWithFavoritesFirst = (a, b) => {
+      if (a.isFavorite && !b.isFavorite) return -1;
+      if (!a.isFavorite && b.isFavorite) return 1;
+      return (a.order || 0) - (b.order || 0);
+    };
 
-    return { favorites, testing, active, done };
+    // Reusable prompts: global first, then project, then favorites within each
+    const reusable = prompts
+      .filter(p => p.reusable)
+      .sort((a, b) => {
+        // Global prompts first
+        if (a.scope === 'global' && b.scope !== 'global') return -1;
+        if (a.scope !== 'global' && b.scope === 'global') return 1;
+        // Then favorites
+        if (a.isFavorite && !b.isFavorite) return -1;
+        if (!a.isFavorite && b.isFavorite) return 1;
+        return (a.order || 0) - (b.order || 0);
+      });
+
+    // Non-reusable prompts can be in regular, testing, or done
+    const regular = prompts
+      .filter(p => !p.reusable && !p.done && !p.testing)
+      .sort(sortWithFavoritesFirst);
+
+    const testing = prompts
+      .filter(p => !p.reusable && p.testing && !p.done)
+      .sort((a, b) => {
+        if (a.isFavorite && !b.isFavorite) return -1;
+        if (!a.isFavorite && b.isFavorite) return 1;
+        return (b.testingStartedAt || 0) - (a.testingStartedAt || 0);
+      });
+
+    const done = prompts
+      .filter(p => !p.reusable && p.done)
+      .sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
+
+    return { reusable, regular, testing, done };
   }, [prompts]);
 
   // Get unique labels from all prompts

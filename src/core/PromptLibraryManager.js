@@ -46,6 +46,16 @@ class PromptLibraryManager extends EventEmitter {
       const oldCategories = this.store.get('promptLibrary.categories', []);
       this.store.set('promptLibrary.labels', oldCategories);
     }
+
+    // Initialize label colors if not present (assign colors to existing labels)
+    if (!this.store.has('promptLibrary.labelColors')) {
+      const existingLabels = this.store.get('promptLibrary.labels', []);
+      const labelColors = {};
+      existingLabels.forEach((label, index) => {
+        labelColors[label] = index % 12; // 12 colors in palette
+      });
+      this.store.set('promptLibrary.labelColors', labelColors);
+    }
   }
 
   /**
@@ -844,6 +854,48 @@ class PromptLibraryManager extends EventEmitter {
   }
 
   /**
+   * Get all label colors
+   * @returns {Object} Map of label name to color index
+   */
+  getLabelColors() {
+    return this.store.get('promptLibrary.labelColors', {});
+  }
+
+  /**
+   * Get a specific label's color index
+   * @param {string} name - Label name
+   * @returns {number} Color index (0-11)
+   */
+  getLabelColor(name) {
+    const colors = this.getLabelColors();
+    return colors[name] !== undefined ? colors[name] : 0;
+  }
+
+  /**
+   * Get the next color index to assign (cycles through 12 colors)
+   * @private
+   */
+  _getNextColorIndex() {
+    const colors = this.getLabelColors();
+    const usedIndices = Object.values(colors);
+    // Find the least used color index
+    const colorCounts = new Array(12).fill(0);
+    usedIndices.forEach(idx => {
+      if (idx >= 0 && idx < 12) colorCounts[idx]++;
+    });
+    // Return the index with lowest count
+    let minCount = Infinity;
+    let minIndex = 0;
+    colorCounts.forEach((count, idx) => {
+      if (count < minCount) {
+        minCount = count;
+        minIndex = idx;
+      }
+    });
+    return minIndex;
+  }
+
+  /**
    * Add a new label
    * @param {string} name - Label name
    * @returns {boolean} True if added, false if already exists
@@ -867,9 +919,15 @@ class PromptLibraryManager extends EventEmitter {
       return false;
     }
 
+    // Assign a color to the new label
+    const labelColors = this.getLabelColors();
+    const colorIndex = this._getNextColorIndex();
+    labelColors[trimmed] = colorIndex;
+
     labels.push(trimmed);
     this.store.set('promptLibrary.labels', labels);
-    this.emit('labels-updated', { labels });
+    this.store.set('promptLibrary.labelColors', labelColors);
+    this.emit('labels-updated', { labels, labelColors });
     return true;
   }
 
@@ -885,9 +943,14 @@ class PromptLibraryManager extends EventEmitter {
       return false;
     }
 
+    // Remove label color
+    const labelColors = this.getLabelColors();
+    delete labelColors[name];
+
     labels.splice(index, 1);
     this.store.set('promptLibrary.labels', labels);
-    this.emit('labels-updated', { labels });
+    this.store.set('promptLibrary.labelColors', labelColors);
+    this.emit('labels-updated', { labels, labelColors });
     return true;
   }
 

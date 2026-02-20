@@ -3,7 +3,7 @@
  * Main prompts management interface
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { usePrompts } from '../hooks/usePrompts';
 import Header from '../components/Header';
@@ -11,14 +11,47 @@ import PromptCard from '../components/PromptCard';
 import PromptModal from '../components/PromptModal';
 import ProjectSelector from '../components/ProjectSelector';
 
+// Persist project selection to localStorage
+function loadPersistedProject() {
+  try {
+    const saved = localStorage.getItem('selectedProject');
+    if (saved) return JSON.parse(saved);
+  } catch {}
+  return { selectedProject: null, showGlobal: false };
+}
+
+function persistProject(selectedProject, showGlobal) {
+  try {
+    localStorage.setItem('selectedProject', JSON.stringify({ selectedProject, showGlobal }));
+  } catch {}
+}
+
 export default function HomePage() {
   const { user } = useAuth();
-  const [selectedProject, setSelectedProject] = useState(null);
-  const [showGlobal, setShowGlobal] = useState(false);
+  const persisted = loadPersistedProject();
+  const [selectedProject, setSelectedProjectState] = useState(persisted.selectedProject);
+  const [showGlobal, setShowGlobalState] = useState(persisted.showGlobal);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedLabel, setSelectedLabel] = useState(null);
   const [editingPrompt, setEditingPrompt] = useState(null);
   const [showModal, setShowModal] = useState(false);
+
+  const setSelectedProject = useCallback((id) => {
+    setSelectedProjectState(id);
+    setShowGlobalState(false);
+    persistProject(id, false);
+  }, []);
+
+  const setShowGlobal = useCallback((val) => {
+    setShowGlobalState(val);
+    if (val) {
+      setSelectedProjectState(null);
+      persistProject(null, true);
+    }
+  }, []);
+
+  const isAllProjects = !showGlobal && !selectedProject;
+  const canCreate = !isAllProjects;
 
   const {
     prompts,
@@ -35,7 +68,7 @@ export default function HomePage() {
     restorePrompt
   } = usePrompts(showGlobal ? '__global__' : selectedProject);
 
-  const { favorites, testing, active, done } = organizedPrompts();
+  const { reusable, regular, testing, done } = organizedPrompts();
   const allLabels = getAllLabels();
 
   // Filter prompts by search and label
@@ -58,13 +91,13 @@ export default function HomePage() {
     });
   };
 
-  const filteredFavorites = filterPrompts(favorites);
+  const filteredReusable = filterPrompts(reusable);
+  const filteredRegular = filterPrompts(regular);
   const filteredTesting = filterPrompts(testing);
-  const filteredActive = filterPrompts(active);
   const filteredDone = filterPrompts(done);
 
   const hasPrompts = prompts.length > 0;
-  const hasFilteredPrompts = filteredFavorites.length + filteredTesting.length + filteredActive.length + filteredDone.length > 0;
+  const hasFilteredPrompts = filteredReusable.length + filteredRegular.length + filteredTesting.length + filteredDone.length > 0;
 
   const handleNewPrompt = () => {
     setEditingPrompt(null);
@@ -109,11 +142,9 @@ export default function HomePage() {
             showGlobal={showGlobal}
             onSelectProject={(id) => {
               setSelectedProject(id);
-              setShowGlobal(false);
             }}
             onShowGlobal={() => {
               setShowGlobal(true);
-              setSelectedProject(null);
             }}
           />
 
@@ -148,14 +179,18 @@ export default function HomePage() {
           </div>
         ) : !hasPrompts ? (
           <div className="flex flex-col items-center justify-center py-12">
-            <div className="text-4xl mb-4">📝</div>
-            <p className="text-app-text-muted mb-4">No prompts yet</p>
-            <button
-              onClick={handleNewPrompt}
-              className="px-4 py-2 bg-app-accent hover:bg-app-accent-hover text-white rounded-lg transition-colors"
-            >
-              Create your first prompt
-            </button>
+            <div className="text-4xl mb-4">{isAllProjects ? '📁' : '📝'}</div>
+            <p className="text-app-text-muted mb-4">
+              {isAllProjects ? 'Select a project to create prompts' : 'No prompts yet'}
+            </p>
+            {canCreate && (
+              <button
+                onClick={handleNewPrompt}
+                className="px-4 py-2 bg-app-accent hover:bg-app-accent-hover text-white rounded-lg transition-colors"
+              >
+                Create your first prompt
+              </button>
+            )}
           </div>
         ) : !hasFilteredPrompts ? (
           <div className="flex flex-col items-center justify-center py-12">
@@ -164,14 +199,35 @@ export default function HomePage() {
           </div>
         ) : (
           <div className="space-y-6">
-            {/* Favorites Section */}
-            {filteredFavorites.length > 0 && (
+            {/* Reusable Section */}
+            {filteredReusable.length > 0 && (
               <section>
-                <h2 className="text-sm font-medium text-app-text-muted mb-3 flex items-center gap-2">
-                  <span>⭐</span> Favorites
+                <h2 className="text-sm font-medium text-emerald-400 mb-3">
+                  REUSABLE ({filteredReusable.length})
                 </h2>
                 <div className="space-y-2">
-                  {filteredFavorites.map(prompt => (
+                  {filteredReusable.map(prompt => (
+                    <PromptCard
+                      key={prompt.id}
+                      prompt={prompt}
+                      compact
+                      onEdit={() => handleEdit(prompt)}
+                      onDelete={() => handleDelete(prompt.id)}
+                      onToggleFavorite={() => toggleFavorite(prompt.id)}
+                    />
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* Regular Section */}
+            {filteredRegular.length > 0 && (
+              <section>
+                <h2 className="text-sm font-medium text-app-text-muted mb-3">
+                  PROMPTS ({filteredRegular.length})
+                </h2>
+                <div className="space-y-2">
+                  {filteredRegular.map(prompt => (
                     <PromptCard
                       key={prompt.id}
                       prompt={prompt}
@@ -189,8 +245,8 @@ export default function HomePage() {
             {/* Testing Section */}
             {filteredTesting.length > 0 && (
               <section>
-                <h2 className="text-sm font-medium text-app-text-muted mb-3 flex items-center gap-2">
-                  <span>🧪</span> Testing
+                <h2 className="text-sm font-medium text-yellow-500 mb-3 flex items-center gap-2">
+                  <span>🧪</span> TESTING ({filteredTesting.length})
                 </h2>
                 <div className="space-y-2">
                   {filteredTesting.map(prompt => (
@@ -208,33 +264,11 @@ export default function HomePage() {
               </section>
             )}
 
-            {/* Active Section */}
-            {filteredActive.length > 0 && (
-              <section>
-                <h2 className="text-sm font-medium text-app-text-muted mb-3">
-                  Prompts
-                </h2>
-                <div className="space-y-2">
-                  {filteredActive.map(prompt => (
-                    <PromptCard
-                      key={prompt.id}
-                      prompt={prompt}
-                      onEdit={() => handleEdit(prompt)}
-                      onDelete={() => handleDelete(prompt.id)}
-                      onToggleFavorite={() => toggleFavorite(prompt.id)}
-                      onMarkDone={() => markAsDone(prompt.id)}
-                      onMarkTesting={() => markAsTesting(prompt.id)}
-                    />
-                  ))}
-                </div>
-              </section>
-            )}
-
             {/* Done Section */}
             {filteredDone.length > 0 && (
               <section>
                 <h2 className="text-sm font-medium text-app-text-muted mb-3 flex items-center gap-2">
-                  <span>✓</span> Done
+                  <span>✓</span> DONE ({filteredDone.length})
                 </h2>
                 <div className="space-y-2 opacity-60">
                   {filteredDone.map(prompt => (
@@ -253,14 +287,16 @@ export default function HomePage() {
         )}
       </main>
 
-      {/* FAB */}
-      <button
-        onClick={handleNewPrompt}
-        className="fixed bottom-6 right-6 w-14 h-14 bg-app-accent hover:bg-app-accent-hover text-white rounded-full shadow-lg flex items-center justify-center text-2xl transition-transform hover:scale-105 active:scale-95"
-        style={{ marginBottom: 'var(--sab)' }}
-      >
-        +
-      </button>
+      {/* FAB - only show when a specific project or global is selected */}
+      {canCreate && (
+        <button
+          onClick={handleNewPrompt}
+          className="fixed bottom-6 right-6 w-14 h-14 bg-app-accent hover:bg-app-accent-hover text-white rounded-full shadow-lg flex items-center justify-center text-2xl transition-transform hover:scale-105 active:scale-95"
+          style={{ marginBottom: 'var(--sab)' }}
+        >
+          +
+        </button>
+      )}
 
       {/* Modal */}
       {showModal && (

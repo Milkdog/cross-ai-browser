@@ -491,21 +491,32 @@ setTimeout(() => {
 const promptLibrary = new PromptLibrary();
 promptLibrary.init();
 
-// Refit terminal when prompt panel visibility changes
-// The panel resize affects available width for terminal
+// Refit terminal when container size changes (e.g., prompt panel toggle)
+// Watch terminal-container, not terminal-layout (which has fixed 100% width)
 const resizeObserver = new ResizeObserver(() => {
   clearTimeout(resizeTimeout);
-  resizeTimeout = setTimeout(fitTerminal, 100);
+  resizeTimeout = setTimeout(fitTerminal, 50);
 });
 
-const terminalLayout = document.getElementById('terminal-layout');
-if (terminalLayout) {
-  resizeObserver.observe(terminalLayout);
+const terminalContainer = document.getElementById('terminal-container');
+if (terminalContainer) {
+  resizeObserver.observe(terminalContainer);
+}
+
+// Also refit after prompt panel transition ends (CSS transition is 200ms)
+const promptPanel = document.getElementById('prompt-panel');
+if (promptPanel) {
+  promptPanel.addEventListener('transitionend', (e) => {
+    if (e.propertyName === 'width') {
+      fitTerminal();
+    }
+  });
 }
 
 // ==================== Ready Indicator ====================
 // Shows a pulsing border when terminal is awaiting user input
 // Disappears when user interacts with the terminal
+// Only reappears after Claude finishes responding (streaming stops)
 
 let isStreaming = false;
 let userInteracted = false;
@@ -518,42 +529,33 @@ function updateReadyIndicator() {
 
 function markUserInteraction() {
   userInteracted = true;
+  clearTimeout(readyIndicatorTimeout); // Cancel any pending reset
   updateReadyIndicator();
 }
 
-function resetReadyIndicator() {
-  // Reset after a delay when streaming stops
-  clearTimeout(readyIndicatorTimeout);
-  readyIndicatorTimeout = setTimeout(() => {
-    userInteracted = false;
-    updateReadyIndicator();
-  }, 2000); // Wait 2 seconds after streaming stops to show ready indicator
-}
-
-// Detect user interaction
+// Detect user interaction - any of these dismisses the indicator
 container.addEventListener('mouseenter', markUserInteraction);
 container.addEventListener('click', markUserInteraction);
 container.addEventListener('keydown', markUserInteraction);
 
-// When mouse leaves the window entirely, reset after delay
-document.addEventListener('mouseleave', () => {
-  clearTimeout(readyIndicatorTimeout);
-  readyIndicatorTimeout = setTimeout(() => {
-    userInteracted = false;
-    updateReadyIndicator();
-  }, 5000); // Wait 5 seconds after mouse leaves
-});
-
 // Listen for streaming state from main process
 window.electronAPI.onStreamingState?.((streaming) => {
+  const wasStreaming = isStreaming;
   isStreaming = streaming;
+
   if (streaming) {
     // Streaming started - hide ready indicator
     userInteracted = true;
+    clearTimeout(readyIndicatorTimeout);
     updateReadyIndicator();
-  } else {
-    // Streaming stopped - schedule ready indicator to show
-    resetReadyIndicator();
+  } else if (wasStreaming) {
+    // Streaming just stopped - show ready indicator after delay
+    // This indicates Claude finished and is ready for new input
+    clearTimeout(readyIndicatorTimeout);
+    readyIndicatorTimeout = setTimeout(() => {
+      userInteracted = false;
+      updateReadyIndicator();
+    }, 2000);
   }
 });
 

@@ -147,6 +147,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     // Label management
     getLabels: () => ipcRenderer.invoke('prompt-library-get-labels'),
+    getLabelColors: () => ipcRenderer.invoke('prompt-library-get-label-colors'),
     addLabel: (name) => ipcRenderer.invoke('prompt-library-add-label', { name }),
     deleteLabel: (name) => ipcRenderer.invoke('prompt-library-delete-label', { name }),
 

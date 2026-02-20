@@ -85,6 +85,41 @@ const tokens = {
       glowDim: 'rgba(34, 197, 94, 0.25)',
       glowDimFar: 'rgba(34, 197, 94, 0.15)',
     },
+
+    // Label colors - distinct colors with good contrast for white text
+    // Used for prompt library labels, each label gets assigned a color
+    label: {
+      // Array of background colors for labels (cycle through)
+      colors: [
+        '#6366f1',  // Indigo
+        '#8b5cf6',  // Violet
+        '#d946ef',  // Fuchsia
+        '#ec4899',  // Pink
+        '#f43f5e',  // Rose
+        '#ef4444',  // Red
+        '#f97316',  // Orange
+        '#eab308',  // Yellow (uses dark text)
+        '#22c55e',  // Green
+        '#14b8a6',  // Teal
+        '#06b6d4',  // Cyan
+        '#3b82f6',  // Blue
+      ],
+      // Text colors for each background (white except for yellow)
+      textColors: [
+        '#ffffff',  // Indigo - white
+        '#ffffff',  // Violet - white
+        '#ffffff',  // Fuchsia - white
+        '#ffffff',  // Pink - white
+        '#ffffff',  // Rose - white
+        '#ffffff',  // Red - white
+        '#ffffff',  // Orange - white
+        '#1a1a20',  // Yellow - dark text for contrast
+        '#ffffff',  // Green - white
+        '#ffffff',  // Teal - white
+        '#1a1a20',  // Cyan - dark text for better contrast
+        '#ffffff',  // Blue - white
+      ],
+    },
   },
 
   // Spacing scale (4px base)
@@ -176,8 +211,14 @@ function generateCSSVariables(tokens) {
   function addColorVars(obj, prefix = '') {
     for (const [key, value] of Object.entries(obj)) {
       const varName = prefix ? `${prefix}-${key}` : key;
+      // Handle arrays (like label colors) - create indexed variables
+      if (Array.isArray(value)) {
+        value.forEach((item, index) => {
+          lines.push(`  --color-${varName}-${index}: ${item};`);
+        });
+      }
       // Recurse into nested objects, but not null or arrays
-      if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      else if (typeof value === 'object' && value !== null) {
         addColorVars(value, varName);
       } else {
         lines.push(`  --color-${varName}: ${value};`);

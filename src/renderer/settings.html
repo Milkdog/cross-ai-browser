@@ -12,78 +12,131 @@
       box-sizing: border-box;
     }
 
+    html, body {
+      height: 100%;
+      overflow: hidden;
+    }
+
     body {
       font-family: var(--font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
-      background: transparent;
-      height: 100vh;
+      background: var(--color-bg-base, #1a1a20);
+      color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
+    }
+
+    /* Full page layout */
+    .settings-page {
       display: flex;
-      align-items: center;
-      justify-content: center;
+      flex-direction: column;
+      height: 100%;
     }
 
-    .settings-modal {
-      background: var(--color-bg-elevated, #252530);
-      border-radius: var(--radius-xl, 12px);
-      padding: var(--spacing-5, 20px);
-      width: 320px;
-      max-width: 90%;
-      box-shadow: var(--shadow-lg, 0 10px 15px rgba(0, 0, 0, 0.5));
-      border: 1px solid var(--color-border-default, #3c3c42);
-    }
-
+    /* Header */
     .settings-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
+      padding: var(--spacing-4, 16px) var(--spacing-6, 24px);
+      background: var(--color-bg-surface, #1f1f24);
+      border-bottom: 1px solid var(--color-border-default, #3c3c42);
+      flex-shrink: 0;
+    }
+
+    .settings-title {
+      font-size: var(--font-size-xl, 18px);
+      font-weight: var(--font-weight-semibold, 600);
+      color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
+    }
+
+    .done-btn {
+      padding: var(--spacing-2, 8px) var(--spacing-4, 16px);
+      background: var(--color-primary-base, #6366f1);
+      border: none;
+      border-radius: var(--radius-md, 6px);
+      color: white;
+      font-size: var(--font-size-sm, 11px);
+      font-weight: var(--font-weight-medium, 500);
+      cursor: pointer;
+      transition: background var(--transition-fast, 0.15s ease);
+    }
+
+    .done-btn:hover {
+      background: var(--color-primary-hover, #5558e3);
+    }
+
+    /* Content area */
+    .settings-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: var(--spacing-6, 24px);
+    }
+
+    .settings-content::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    .settings-content::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .settings-content::-webkit-scrollbar-thumb {
+      background: var(--color-border-subtle, #333338);
+      border-radius: 4px;
+    }
+
+    .settings-content::-webkit-scrollbar-thumb:hover {
+      background: var(--color-border-default, #3c3c42);
+    }
+
+    /* Settings grid */
+    .settings-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: var(--spacing-4, 16px);
+      max-width: 1200px;
+    }
+
+    /* Section card */
+    .settings-card {
+      background: var(--color-bg-surface, #1f1f24);
+      border: 1px solid var(--color-border-default, #3c3c42);
+      border-radius: var(--radius-lg, 8px);
+      padding: var(--spacing-5, 20px);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: var(--spacing-3, 12px);
       margin-bottom: var(--spacing-4, 16px);
       padding-bottom: var(--spacing-3, 12px);
       border-bottom: 1px solid var(--color-border-subtle, #333338);
     }
 
-    .settings-title {
-      color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
-      font-size: 15px;
-      font-weight: var(--font-weight-semibold, 600);
-    }
-
-    .close-btn {
-      width: 28px;
-      height: 28px;
-      border-radius: var(--radius-md, 6px);
-      border: none;
-      background: var(--color-bg-card, #2a2a32);
-      cursor: pointer;
+    .card-icon {
+      width: 32px;
+      height: 32px;
       display: flex;
       align-items: center;
       justify-content: center;
-      color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
-      transition: all var(--transition-normal, 0.2s ease);
+      background: var(--color-primary-muted, rgba(99, 102, 241, 0.15));
+      border-radius: var(--radius-md, 6px);
+      color: var(--color-primary-base, #6366f1);
     }
 
-    .close-btn:hover {
-      background: var(--color-bg-cardHover, #32323c);
-      color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
+    .card-icon svg {
+      width: 18px;
+      height: 18px;
     }
 
-    .settings-section {
-      margin-bottom: var(--spacing-5, 20px);
-    }
-
-    .settings-section:last-child {
-      margin-bottom: 0;
-    }
-
-    .section-title {
-      color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
-      font-size: var(--font-size-xs, 10px);
+    .card-title {
+      font-size: var(--font-size-md, 14px);
       font-weight: var(--font-weight-semibold, 600);
-      text-transform: uppercase;
-      letter-spacing: var(--letter-spacing-wide, 0.5px);
-      margin-bottom: var(--spacing-3, 12px);
+      color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
     }
 
+    /* Settings group */
     .settings-group {
-      margin-bottom: var(--spacing-3, 12px);
+      margin-bottom: var(--spacing-4, 16px);
     }
 
     .settings-group:last-child {
@@ -92,37 +145,72 @@
 
     .settings-label {
       display: block;
+      color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
+      font-size: var(--font-size-sm, 11px);
+      font-weight: var(--font-weight-medium, 500);
+      margin-bottom: var(--spacing-2, 8px);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .settings-description {
       color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
       font-size: var(--font-size-sm, 11px);
-      margin-bottom: var(--spacing-1, 4px);
+      margin-top: var(--spacing-1, 4px);
     }
 
     /* Toggle switch */
     .settings-toggle {
       display: flex;
       align-items: center;
-      gap: 10px;
+      justify-content: space-between;
+      padding: var(--spacing-3, 12px);
+      background: var(--color-bg-card, #2a2a32);
+      border-radius: var(--radius-md, 6px);
       cursor: pointer;
+      transition: background var(--transition-fast, 0.15s ease);
+    }
+
+    .settings-toggle:hover {
+      background: var(--color-bg-cardHover, #32323c);
     }
 
     .settings-toggle input {
       display: none;
     }
 
+    .toggle-content {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .toggle-title {
+      color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
+      font-size: var(--font-size-base, 13px);
+      font-weight: var(--font-weight-medium, 500);
+    }
+
+    .toggle-description {
+      color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
+      font-size: var(--font-size-sm, 11px);
+    }
+
     .toggle-slider {
-      width: 36px;
-      height: 20px;
-      background: var(--color-bg-cardHover, #32323c);
+      width: 40px;
+      height: 22px;
+      background: var(--color-border-default, #3c3c42);
       border-radius: var(--radius-full, 9999px);
       position: relative;
       transition: background var(--transition-normal, 0.2s ease);
+      flex-shrink: 0;
     }
 
     .toggle-slider::after {
       content: '';
       position: absolute;
-      width: 16px;
-      height: 16px;
+      width: 18px;
+      height: 18px;
       background: white;
       border-radius: 50%;
       top: 2px;
@@ -135,118 +223,51 @@
     }
 
     .settings-toggle input:checked + .toggle-slider::after {
-      transform: translateX(16px);
-    }
-
-    .toggle-label {
-      color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
-      font-size: var(--font-size-sm, 11px);
+      transform: translateX(18px);
     }
 
     /* Select dropdown */
-    .settings-group select {
+    .settings-select {
       width: 100%;
-      padding: var(--spacing-2, 8px) 10px;
-      background: var(--color-bg-input, #1e1e24);
+      padding: var(--spacing-3, 12px);
+      background: var(--color-bg-card, #2a2a32);
       border: 1px solid var(--color-border-default, #3c3c42);
       border-radius: var(--radius-md, 6px);
       color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
-      font-size: var(--font-size-sm, 11px);
+      font-size: var(--font-size-base, 13px);
       cursor: pointer;
       outline: none;
+      transition: border-color var(--transition-fast, 0.15s ease);
     }
 
-    .settings-group select:hover {
-      background: var(--color-bg-card, #2a2a32);
+    .settings-select:hover {
+      background: var(--color-bg-cardHover, #32323c);
     }
 
-    .settings-group select:focus {
+    .settings-select:focus {
       border-color: var(--color-primary-base, #6366f1);
     }
 
-    .settings-group select option {
+    .settings-select option {
       background: var(--color-bg-elevated, #252530);
       color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
-    }
-
-    /* Action button */
-    .action-btn {
-      width: 100%;
-      padding: 10px;
-      background: var(--color-bg-card, #2a2a32);
-      border: 1px solid var(--color-border-default, #3c3c42);
-      border-radius: var(--radius-md, 6px);
-      color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
-      font-size: var(--font-size-sm, 11px);
-      cursor: pointer;
-      transition: all var(--transition-normal, 0.2s ease);
-    }
-
-    .action-btn:hover {
-      background: var(--color-bg-cardHover, #32323c);
-      border-color: var(--color-border-hover, #4a4a52);
-      color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
-    }
-
-    .action-btn.danger:hover {
-      background: var(--color-status-errorMuted, rgba(239, 68, 68, 0.15));
-      border-color: rgba(239, 68, 68, 0.3);
-      color: var(--color-status-error, #ef4444);
-    }
-
-    /* Theme preview */
-    .theme-preview {
-      background: var(--color-bg-base, #1a1a20);
-      border-radius: var(--radius-md, 6px);
-      padding: 10px 12px;
-      font-family: Menlo, Monaco, 'Courier New', monospace;
-      font-size: var(--font-size-sm, 11px);
-      line-height: 1.5;
-      border: 1px solid var(--color-border-default, #3c3c42);
-    }
-
-    .preview-line {
-      white-space: nowrap;
-    }
-
-    .preview-prompt {
-      color: #6a9955;
-    }
-
-    .preview-cmd {
-      color: #569cd6;
-    }
-
-    .preview-text {
-      color: #d4d4d4;
-    }
-
-    .preview-green {
-      color: #6a9955;
-    }
-
-    .preview-red {
-      color: #f44747;
-    }
-
-    .preview-yellow {
-      color: #dcdcaa;
     }
 
     /* Input field */
     .settings-input {
       width: 100%;
-      padding: var(--spacing-2, 8px) 10px;
-      background: var(--color-bg-input, #1e1e24);
+      padding: var(--spacing-3, 12px);
+      background: var(--color-bg-card, #2a2a32);
       border: 1px solid var(--color-border-default, #3c3c42);
       border-radius: var(--radius-md, 6px);
       color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
-      font-size: var(--font-size-sm, 11px);
+      font-size: var(--font-size-base, 13px);
       outline: none;
+      transition: border-color var(--transition-fast, 0.15s ease);
     }
 
     .settings-input:hover {
-      background: var(--color-bg-card, #2a2a32);
+      background: var(--color-bg-cardHover, #32323c);
     }
 
     .settings-input:focus {
@@ -257,7 +278,26 @@
       color: var(--color-text-disabled, rgba(255, 255, 255, 0.3));
     }
 
-    /* Primary button */
+    /* Action button */
+    .action-btn {
+      width: 100%;
+      padding: var(--spacing-3, 12px);
+      background: var(--color-bg-card, #2a2a32);
+      border: 1px solid var(--color-border-default, #3c3c42);
+      border-radius: var(--radius-md, 6px);
+      color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
+      font-size: var(--font-size-base, 13px);
+      font-weight: var(--font-weight-medium, 500);
+      cursor: pointer;
+      transition: all var(--transition-fast, 0.15s ease);
+    }
+
+    .action-btn:hover {
+      background: var(--color-bg-cardHover, #32323c);
+      border-color: var(--color-border-hover, #4a4a52);
+      color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
+    }
+
     .action-btn.primary {
       background: var(--color-primary-base, #6366f1);
       border-color: var(--color-primary-base, #6366f1);
@@ -274,25 +314,68 @@
       cursor: not-allowed;
     }
 
+    .action-btn.danger:hover {
+      background: var(--color-status-errorMuted, rgba(239, 68, 68, 0.15));
+      border-color: rgba(239, 68, 68, 0.3);
+      color: var(--color-status-error, #ef4444);
+    }
+
+    /* Theme preview */
+    .theme-preview {
+      background: var(--color-bg-base, #1a1a20);
+      border-radius: var(--radius-md, 6px);
+      padding: var(--spacing-3, 12px);
+      font-family: Menlo, Monaco, 'Courier New', monospace;
+      font-size: var(--font-size-sm, 11px);
+      line-height: 1.6;
+      border: 1px solid var(--color-border-default, #3c3c42);
+      margin-top: var(--spacing-2, 8px);
+    }
+
+    .preview-line {
+      white-space: nowrap;
+    }
+
     /* Error message */
     .error-message {
       color: var(--color-status-error, #ef4444);
       font-size: var(--font-size-sm, 11px);
-      padding: var(--spacing-1, 4px) var(--spacing-2, 8px);
+      padding: var(--spacing-2, 8px) var(--spacing-3, 12px);
       background: var(--color-status-errorMuted, rgba(239, 68, 68, 0.15));
-      border-radius: var(--radius-sm, 4px);
+      border-radius: var(--radius-md, 6px);
+      margin-bottom: var(--spacing-3, 12px);
     }
 
-    /* User info */
-    .user-info {
+    /* User info for cloud sync */
+    .user-info-card {
       display: flex;
-      flex-direction: column;
-      gap: var(--spacing-1, 4px);
+      align-items: center;
+      gap: var(--spacing-3, 12px);
+      padding: var(--spacing-3, 12px);
+      background: var(--color-bg-card, #2a2a32);
+      border-radius: var(--radius-md, 6px);
+      margin-bottom: var(--spacing-3, 12px);
+    }
+
+    .user-avatar {
+      width: 40px;
+      height: 40px;
+      background: var(--color-primary-muted, rgba(99, 102, 241, 0.15));
+      border-radius: var(--radius-full, 9999px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--color-primary-base, #6366f1);
+    }
+
+    .user-details {
+      flex: 1;
     }
 
     .user-email {
       color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
-      font-size: var(--font-size-sm, 11px);
+      font-size: var(--font-size-base, 13px);
+      font-weight: var(--font-weight-medium, 500);
     }
 
     .sync-status {
@@ -308,112 +391,169 @@
       color: var(--color-status-success, #22c55e);
     }
 
-    /* Hint text */
-    .settings-hint {
-      color: var(--color-text-disabled, rgba(255, 255, 255, 0.3));
-      font-size: var(--font-size-xs, 10px);
+    /* Form row for login */
+    .form-row {
+      display: flex;
+      gap: var(--spacing-2, 8px);
+      margin-bottom: var(--spacing-3, 12px);
+    }
+
+    .form-row .settings-input {
+      flex: 1;
+    }
+
+    /* Divider */
+    .settings-divider {
+      height: 1px;
+      background: var(--color-border-subtle, #333338);
+      margin: var(--spacing-4, 16px) 0;
     }
   </style>
 </head>
 <body>
-  <div class="settings-modal">
+  <div class="settings-page">
     <div class="settings-header">
       <span class="settings-title">Settings</span>
-      <button class="close-btn" id="close-btn">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <line x1="18" y1="6" x2="6" y2="18"/>
-          <line x1="6" y1="6" x2="18" y2="18"/>
-        </svg>
-      </button>
+      <button class="done-btn" id="done-btn">Done</button>
     </div>
 
-    <div class="settings-section">
-      <div class="section-title">Notifications</div>
-      <div class="settings-group">
-        <label class="settings-toggle">
-          <input type="checkbox" id="notifications-enabled" checked>
-          <span class="toggle-slider"></span>
-          <span class="toggle-label">Enable notifications</span>
-        </label>
-      </div>
+    <div class="settings-content">
+      <div class="settings-grid">
 
-      <div class="settings-group">
-        <label class="settings-label">Notify when</label>
-        <select id="notification-mode">
-          <option value="always">Always</option>
-          <option value="unfocused">Window unfocused</option>
-          <option value="inactive-tab">Inactive tab only</option>
-        </select>
-      </div>
-    </div>
+        <!-- Notifications -->
+        <div class="settings-card">
+          <div class="card-header">
+            <div class="card-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+                <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+              </svg>
+            </div>
+            <span class="card-title">Notifications</span>
+          </div>
 
-    <div class="settings-section">
-      <div class="section-title">Downloads</div>
-      <div class="settings-group">
-        <label class="settings-label">Save location</label>
-        <select id="download-save-mode">
-          <option value="ask">Always ask</option>
-          <option value="auto">Auto-save to Downloads</option>
-        </select>
-      </div>
+          <div class="settings-group">
+            <label class="settings-toggle">
+              <div class="toggle-content">
+                <span class="toggle-title">Enable notifications</span>
+                <span class="toggle-description">Get notified when AI responses complete</span>
+              </div>
+              <input type="checkbox" id="notifications-enabled" checked>
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
 
-      <div class="settings-group">
-        <button class="action-btn danger" id="clear-history-btn">Clear Download History</button>
-      </div>
-    </div>
-
-    <div class="settings-section">
-      <div class="section-title">Terminal</div>
-      <div class="settings-group">
-        <label class="settings-label">Color scheme</label>
-        <select id="terminal-theme">
-          <!-- Populated dynamically -->
-        </select>
-      </div>
-      <div class="settings-group">
-        <div class="theme-preview" id="theme-preview">
-          <div class="preview-line"><span class="preview-prompt">$</span> <span class="preview-cmd">claude</span></div>
-          <div class="preview-line"><span class="preview-text">Hello! How can I help?</span></div>
-          <div class="preview-line"><span class="preview-green">Success</span> <span class="preview-red">Error</span> <span class="preview-yellow">Warning</span></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="settings-section">
-      <div class="section-title">Cloud Sync</div>
-
-      <!-- Logged out state -->
-      <div id="firebase-logged-out">
-        <div class="settings-group">
-          <label class="settings-label">Email</label>
-          <input type="email" id="firebase-email" class="settings-input" placeholder="you@example.com">
-        </div>
-        <div class="settings-group">
-          <label class="settings-label">Password</label>
-          <input type="password" id="firebase-password" class="settings-input" placeholder="••••••••">
-        </div>
-        <div class="settings-group">
-          <div id="firebase-error" class="error-message" style="display: none;"></div>
-        </div>
-        <div class="settings-group">
-          <button class="action-btn primary" id="firebase-login-btn">Sign In</button>
-        </div>
-        <div class="settings-group">
-          <span class="settings-hint">Sign in to sync prompts across devices</span>
-        </div>
-      </div>
-
-      <!-- Logged in state -->
-      <div id="firebase-logged-in" style="display: none;">
-        <div class="settings-group">
-          <div class="user-info">
-            <span class="user-email" id="firebase-user-email"></span>
-            <span class="sync-status" id="firebase-sync-status"></span>
+          <div class="settings-group">
+            <label class="settings-label">Notify when</label>
+            <select id="notification-mode" class="settings-select">
+              <option value="always">Always</option>
+              <option value="unfocused">Window is unfocused</option>
+              <option value="inactive-tab">Tab is inactive</option>
+            </select>
           </div>
         </div>
-        <div class="settings-group">
-          <button class="action-btn danger" id="firebase-logout-btn">Sign Out</button>
+
+        <!-- Terminal -->
+        <div class="settings-card">
+          <div class="card-header">
+            <div class="card-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="4 17 10 11 4 5"/>
+                <line x1="12" y1="19" x2="20" y2="19"/>
+              </svg>
+            </div>
+            <span class="card-title">Terminal</span>
+          </div>
+
+          <div class="settings-group">
+            <label class="settings-label">Color scheme</label>
+            <select id="terminal-theme" class="settings-select">
+              <!-- Populated dynamically -->
+            </select>
+            <div class="theme-preview" id="theme-preview">
+              <div class="preview-line"><span class="preview-prompt">$</span> <span class="preview-cmd">claude</span></div>
+              <div class="preview-line"><span class="preview-text">Hello! How can I help?</span></div>
+              <div class="preview-line"><span class="preview-green">Success</span> <span class="preview-red">Error</span> <span class="preview-yellow">Warning</span></div>
+            </div>
+          </div>
         </div>
+
+        <!-- Downloads -->
+        <div class="settings-card">
+          <div class="card-header">
+            <div class="card-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+            </div>
+            <span class="card-title">Downloads</span>
+          </div>
+
+          <div class="settings-group">
+            <label class="settings-label">Save location</label>
+            <select id="download-save-mode" class="settings-select">
+              <option value="ask">Always ask where to save</option>
+              <option value="auto">Auto-save to Downloads folder</option>
+            </select>
+          </div>
+
+          <div class="settings-divider"></div>
+
+          <div class="settings-group">
+            <button class="action-btn danger" id="clear-history-btn">Clear Download History</button>
+          </div>
+        </div>
+
+        <!-- Cloud Sync -->
+        <div class="settings-card">
+          <div class="card-header">
+            <div class="card-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>
+              </svg>
+            </div>
+            <span class="card-title">Cloud Sync</span>
+          </div>
+
+          <!-- Logged out state -->
+          <div id="firebase-logged-out">
+            <p class="settings-description" style="margin-bottom: var(--spacing-3, 12px);">
+              Sign in to sync prompts across your devices
+            </p>
+            <div id="firebase-error" class="error-message" style="display: none;"></div>
+            <div class="settings-group">
+              <input type="email" id="firebase-email" class="settings-input" placeholder="Email address">
+            </div>
+            <div class="settings-group">
+              <input type="password" id="firebase-password" class="settings-input" placeholder="Password">
+            </div>
+            <div class="settings-group">
+              <button class="action-btn primary" id="firebase-login-btn">Sign In</button>
+            </div>
+          </div>
+
+          <!-- Logged in state -->
+          <div id="firebase-logged-in" style="display: none;">
+            <div class="user-info-card">
+              <div class="user-avatar">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                  <circle cx="12" cy="7" r="4"/>
+                </svg>
+              </div>
+              <div class="user-details">
+                <div class="user-email" id="firebase-user-email"></div>
+                <div class="sync-status" id="firebase-sync-status">Synced</div>
+              </div>
+            </div>
+            <div class="settings-group">
+              <button class="action-btn danger" id="firebase-logout-btn">Sign Out</button>
+            </div>
+          </div>
+        </div>
+
       </div>
     </div>
   </div>
@@ -423,7 +563,7 @@
     const notificationMode = document.getElementById('notification-mode');
     const downloadSaveMode = document.getElementById('download-save-mode');
     const clearHistoryBtn = document.getElementById('clear-history-btn');
-    const closeBtn = document.getElementById('close-btn');
+    const doneBtn = document.getElementById('done-btn');
     const terminalThemeSelect = document.getElementById('terminal-theme');
     const themePreview = document.getElementById('theme-preview');
 
@@ -523,17 +663,9 @@
       }, 1500);
     };
 
-    closeBtn.onclick = () => {
+    doneBtn.onclick = () => {
       window.electronAPI.closeSettings();
     };
-
-    // Close on backdrop click (click outside the modal)
-    document.addEventListener('click', (e) => {
-      const modal = document.querySelector('.settings-modal');
-      if (modal && !modal.contains(e.target)) {
-        window.electronAPI.closeSettings();
-      }
-    });
 
     // Close on Escape
     document.addEventListener('keydown', (e) => {
@@ -576,19 +708,12 @@
     }
 
     firebaseLoginBtn.onclick = async () => {
-      console.log('[Settings] Login button clicked');
-      // Immediate visual feedback
-      firebaseLoginBtn.textContent = 'Clicked!';
-
       const email = firebaseEmail.value.trim();
       const password = firebasePassword.value;
-
-      console.log('[Settings] Email:', email, 'Password length:', password.length);
 
       if (!email || !password) {
         firebaseError.textContent = 'Please enter email and password';
         firebaseError.style.display = 'block';
-        firebaseLoginBtn.textContent = 'Sign In';
         return;
       }
 
@@ -597,21 +722,17 @@
       firebaseLoginBtn.textContent = 'Signing in...';
 
       try {
-        console.log('[Settings] Calling firebaseLogin...');
         const result = await window.electronAPI.firebaseLogin(email, password);
-        console.log('[Settings] Login result:', result);
         if (result.success) {
           firebasePassword.value = '';
           updateFirebaseUI({ user: result.user, syncing: true });
-          // Migration will happen automatically on login
-          firebaseSyncStatus.textContent = 'Migrating prompts...';
+          firebaseSyncStatus.textContent = 'Syncing prompts...';
           firebaseSyncStatus.className = 'sync-status syncing';
         } else {
           firebaseError.textContent = result.error || 'Login failed';
           firebaseError.style.display = 'block';
         }
       } catch (e) {
-        console.error('[Settings] Login error:', e);
         firebaseError.textContent = e.message || 'Login failed';
         firebaseError.style.display = 'block';
       } finally {

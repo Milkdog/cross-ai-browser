@@ -5,6 +5,33 @@
 
 import { useState, useRef, useEffect } from 'react';
 
+// Label colors matching design-tokens.js
+const LABEL_COLORS = [
+  { bg: '#6366f1', text: '#ffffff' },  // Indigo
+  { bg: '#8b5cf6', text: '#ffffff' },  // Violet
+  { bg: '#d946ef', text: '#ffffff' },  // Fuchsia
+  { bg: '#ec4899', text: '#ffffff' },  // Pink
+  { bg: '#f43f5e', text: '#ffffff' },  // Rose
+  { bg: '#ef4444', text: '#ffffff' },  // Red
+  { bg: '#f97316', text: '#ffffff' },  // Orange
+  { bg: '#eab308', text: '#1a1a20' },  // Yellow (dark text)
+  { bg: '#22c55e', text: '#ffffff' },  // Green
+  { bg: '#14b8a6', text: '#ffffff' },  // Teal
+  { bg: '#06b6d4', text: '#1a1a20' },  // Cyan (dark text)
+  { bg: '#3b82f6', text: '#ffffff' },  // Blue
+];
+
+// Generate a deterministic color index from label name
+function getLabelColorIndex(label) {
+  let hash = 0;
+  for (let i = 0; i < label.length; i++) {
+    const char = label.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  return Math.abs(hash) % LABEL_COLORS.length;
+}
+
 export default function PromptModal({ prompt, allLabels, onSave, onClose }) {
   const [title, setTitle] = useState(prompt?.title || '');
   const [content, setContent] = useState(prompt?.prompt || '');
@@ -18,6 +45,14 @@ export default function PromptModal({ prompt, allLabels, onSave, onClose }) {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const labelInputRef = useRef(null);
+
+  // Global prompts are always reusable
+  const isGlobal = scope === 'global';
+  useEffect(() => {
+    if (isGlobal && !reusable) {
+      setReusable(true);
+    }
+  }, [scope, isGlobal, reusable]);
 
   const filteredSuggestions = labelInput
     ? allLabels.filter(
@@ -124,20 +159,26 @@ export default function PromptModal({ prompt, allLabels, onSave, onClose }) {
           {/* Current labels */}
           {labels.length > 0 && (
             <div className="flex flex-wrap gap-2 mb-2">
-              {labels.map(label => (
-                <span
-                  key={label}
-                  className="inline-flex items-center gap-1 px-3 py-1 bg-app-surface text-app-text-muted text-sm rounded-full border border-app-border"
-                >
-                  {label}
-                  <button
-                    onClick={() => removeLabel(label)}
-                    className="hover:text-red-400 ml-1"
+              {labels.map(label => {
+                const colorIndex = getLabelColorIndex(label);
+                const colors = LABEL_COLORS[colorIndex];
+                return (
+                  <span
+                    key={label}
+                    className="inline-flex items-center gap-1 px-3 py-1 text-sm rounded-full font-medium"
+                    style={{ backgroundColor: colors.bg, color: colors.text }}
                   >
-                    ×
-                  </button>
-                </span>
-              ))}
+                    {label}
+                    <button
+                      onClick={() => removeLabel(label)}
+                      className="ml-1 opacity-70 hover:opacity-100 transition-opacity"
+                      style={{ color: colors.text }}
+                    >
+                      ×
+                    </button>
+                  </span>
+                );
+              })}
             </div>
           )}
 
@@ -197,15 +238,18 @@ export default function PromptModal({ prompt, allLabels, onSave, onClose }) {
           </div>
 
           {/* Reusable checkbox */}
-          <label className="flex items-center gap-2 cursor-pointer">
+          <label className={`flex items-center gap-2 ${isGlobal ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
             <input
               type="checkbox"
               checked={reusable}
               onChange={(e) => setReusable(e.target.checked)}
-              className="w-4 h-4 rounded border-app-border bg-app-surface text-app-accent focus:ring-app-accent"
+              disabled={isGlobal}
+              className="w-4 h-4 rounded border-app-border bg-app-surface text-app-accent focus:ring-app-accent disabled:cursor-not-allowed"
             />
             <span className="text-sm text-app-text">Reusable</span>
-            <span className="text-xs text-app-text-muted">(stays active after use)</span>
+            <span className="text-xs text-app-text-muted">
+              {isGlobal ? '(global prompts are always reusable)' : '(stays active after use)'}
+            </span>
           </label>
         </div>
       </div>

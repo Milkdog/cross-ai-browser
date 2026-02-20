@@ -47,7 +47,7 @@
 #prompt-panel {
   width: 300px;
   min-width: 200px;
-  max-width: 500px;
+  max-width: 50%;
   background: var(--color-bg-surface, #1f1f24);
   border-left: 1px solid var(--color-border-default, #3c3c42);
   display: flex;
@@ -381,11 +381,13 @@
 
 .prompt-card-label {
   font-size: var(--font-size-xs, 10px);
-  background: var(--color-primary-muted, rgba(99, 102, 241, 0.15));
-  color: #a5b4fc;
+  /* Background and color set via inline styles based on label color */
+  background: var(--color-label-colors-0, #6366f1);
+  color: var(--color-label-textColors-0, #ffffff);
   padding: 2px 6px;
   border-radius: var(--radius-sm, 4px);
   letter-spacing: 0.3px;
+  font-weight: var(--font-weight-medium, 500);
 }
 
 .prompt-card-title {
@@ -910,26 +912,31 @@
   display: inline-flex;
   align-items: center;
   gap: var(--spacing-1, 4px);
-  background: var(--color-primary-muted, rgba(99, 102, 241, 0.15));
-  color: #a5b4fc;
+  /* Background and color set via inline styles based on label color */
+  background: var(--color-label-colors-0, #6366f1);
+  color: var(--color-label-textColors-0, #ffffff);
   padding: var(--spacing-1, 4px) var(--spacing-2, 8px);
   border-radius: var(--radius-sm, 4px);
   font-size: var(--font-size-sm, 11px);
+  font-weight: var(--font-weight-medium, 500);
 }
 
 .prompt-label-remove {
   background: none;
   border: none;
-  color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
+  /* Color inherited from parent or set via inline style */
+  color: inherit;
+  opacity: 0.7;
   font-size: var(--font-size-md, 14px);
   cursor: pointer;
   padding: 0;
   line-height: 1;
   margin-left: 2px;
+  transition: opacity var(--transition-fast, 150ms ease);
 }
 
 .prompt-label-remove:hover {
-  color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
+  opacity: 1;
 }
 
 .prompt-labels-input {
@@ -1101,6 +1108,32 @@
   cursor: not-allowed;
 }
 
+.prompt-modal-btn.save-and-send {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-1, 4px);
+  background: var(--color-semantic-testingMuted, rgba(234, 179, 8, 0.15));
+  color: var(--color-semantic-testing, #eab308);
+  border: 1px solid rgba(234, 179, 8, 0.3);
+}
+
+.prompt-modal-btn.save-and-send:hover {
+  background: rgba(234, 179, 8, 0.25);
+  border-color: rgba(234, 179, 8, 0.5);
+}
+
+.prompt-modal-btn.save-and-send:disabled {
+  background: var(--color-bg-cardHover, #32323c);
+  color: var(--color-text-disabled, rgba(255, 255, 255, 0.3));
+  border-color: transparent;
+  cursor: not-allowed;
+}
+
+.save-and-send-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
 /* Toggle button in terminal header (outside panel) */
 #prompt-toggle-btn {
   position: fixed;
@@ -1265,4 +1298,153 @@
 
 .prompt-image-thumb.thumbnail-error img {
   display: none;
+}
+
+/* Inline editor - editing state on panel (inherits 50% max from base) */
+
+/* Inline editor container */
+.prompt-inline-editor {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Inline editor header */
+.inline-editor-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2, 8px);
+  padding: var(--spacing-2, 8px) var(--spacing-3, 12px);
+  border-bottom: 1px solid var(--color-border-default, #3c3c42);
+  flex-shrink: 0;
+  background: var(--color-bg-elevated, #252530);
+}
+
+.inline-editor-back {
+  background: none;
+  border: none;
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
+  cursor: pointer;
+  padding: var(--spacing-1, 4px);
+  border-radius: var(--radius-sm, 4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast, 0.15s ease);
+}
+
+.inline-editor-back:hover {
+  background: var(--color-bg-card, #2a2a32);
+  color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
+}
+
+.inline-editor-title {
+  font-size: var(--font-size-sm, 11px);
+  font-weight: var(--font-weight-semibold, 600);
+  color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Inline editor body - scrollable form */
+.inline-editor-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--spacing-3, 12px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-3, 12px);
+}
+
+.inline-editor-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.inline-editor-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.inline-editor-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+
+.inline-editor-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Textarea in inline editor takes available space */
+.inline-editor-body .prompt-form-textarea {
+  flex: 1;
+  min-height: 150px;
+  resize: vertical;
+}
+
+/* Inline editor footer */
+.inline-editor-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-2, 8px) var(--spacing-3, 12px);
+  border-top: 1px solid var(--color-border-default, #3c3c42);
+}
+
+.inline-editor-footer-left {
+  display: flex;
+  gap: var(--spacing-2, 8px);
+}
+
+.inline-editor-footer-right {
+  display: flex;
+  gap: var(--spacing-2, 8px);
+  flex-shrink: 0;
+  background: var(--color-bg-elevated, #252530);
+}
+
+/* Label suggestions z-index within inline editor */
+.prompt-inline-editor .prompt-labels-suggestions {
+  z-index: 20;
+}
+
+/* Smaller image thumbnails in inline editor */
+.prompt-inline-editor .prompt-image-thumb {
+  width: 48px;
+  height: 48px;
+}
+
+.prompt-inline-editor .prompt-images-drop-zone {
+  height: 36px;
+  font-size: 11px;
+}
+
+.prompt-inline-editor .prompt-labels-input {
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.prompt-inline-editor .prompt-label-tag {
+  font-size: 11px;
+  padding: 3px 6px;
+}
+
+.prompt-inline-editor .prompt-labels-suggestion {
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.prompt-inline-editor .prompt-form-label {
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.prompt-inline-editor .prompt-form-input {
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.prompt-inline-editor .prompt-form-hint {
+  font-size: 10px;
+  margin-bottom: 4px;
 }

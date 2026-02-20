@@ -18,6 +18,7 @@
 class PromptLibrary {
   constructor() {
     this.prompts = [];
+    this.labelColors = {}; // Map of label name to color index
     this.panelVisible = false;
     this.panelWidth = 300;
     this.editingPromptId = null;
@@ -25,9 +26,12 @@ class PromptLibrary {
     this.isResizing = false;
     this.doneCollapsed = false;
     this.testingCollapsed = false;
-    this.favoritesCollapsed = false;
+    this.reusableCollapsed = false;
+    this.regularCollapsed = false;
     this.searchQuery = '';
     this.testingTimerInterval = null;
+    this.isInlineEditing = false;
+    this.preEditPanelWidth = null;
 
     // DOM elements (set after init)
     this.panel = null;
@@ -110,6 +114,11 @@ class PromptLibrary {
         const path2 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         path2.setAttribute('d', 'M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z');
         return [circle, path1, path2];
+      },
+      folder: () => {
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', 'M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z');
+        return [path];
       },
       refresh: () => {
         const path1 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -240,8 +249,13 @@ class PromptLibrary {
 
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
-      // Escape to close modal
+      // Escape to close inline editor or modal
       if (e.key === 'Escape') {
+        if (this.isInlineEditing) {
+          this.closeInlineEditor();
+          e.stopPropagation();
+          return;
+        }
         this.closeModal();
       }
       // Cmd/Ctrl + Shift + P to toggle panel
@@ -262,7 +276,9 @@ class PromptLibrary {
       if (!this.isResizing) return;
 
       const dx = startX - e.clientX;
-      const newWidth = Math.min(500, Math.max(200, startWidth + dx));
+      const layoutWidth = document.getElementById('terminal-layout')?.offsetWidth || window.innerWidth;
+      const maxWidth = Math.floor(layoutWidth * 0.5);
+      const newWidth = Math.min(maxWidth, Math.max(200, startWidth + dx));
       this.panel.style.width = `${newWidth}px`;
       this.panelWidth = newWidth;
     };
@@ -271,6 +287,7 @@ class PromptLibrary {
       if (!this.isResizing) return;
 
       this.isResizing = false;
+      this.panel.style.transition = '';
       this.resizeDivider.classList.remove('resizing');
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
@@ -289,6 +306,7 @@ class PromptLibrary {
       startX = e.clientX;
       startWidth = this.panel.offsetWidth;
 
+      this.panel.style.transition = 'none';
       this.resizeDivider.classList.add('resizing');
       document.body.style.cursor = 'col-resize';
       document.body.style.userSelect = 'none';
@@ -512,8 +530,12 @@ class PromptLibrary {
     try {
       if (window.electronAPI?.promptLibrary?.getPrompts) {
         this.prompts = await window.electronAPI.promptLibrary.getPrompts();
-        this.renderPrompts();
       }
+      // Also load label colors
+      if (window.electronAPI?.promptLibrary?.getLabelColors) {
+        this.labelColors = await window.electronAPI.promptLibrary.getLabelColors();
+      }
+      this.renderPrompts();
     } catch (err) {
       console.error('Failed to load prompts:', err);
       this.prompts = [];
@@ -525,6 +547,10 @@ class PromptLibrary {
    * Toggle panel visibility
    */
   togglePanel() {
+    if (this.isInlineEditing) {
+      this.closeInlineEditor();
+      return;
+    }
     this.panelVisible = !this.panelVisible;
     this.updatePanelVisibility();
     this.savePanelState();
@@ -597,6 +623,44 @@ class PromptLibrary {
   }
 
   /**
+   * Get the background color for a label
+   * @param {string} labelName - Label name
+   * @returns {string} CSS color value
+   */
+  getLabelBgColor(labelName) {
+    const colorIndex = this.labelColors[labelName] !== undefined ? this.labelColors[labelName] : 0;
+    // Use CSS variables if available, otherwise fall back to hardcoded values
+    const style = getComputedStyle(document.documentElement);
+    const cssVar = style.getPropertyValue(`--color-label-colors-${colorIndex}`).trim();
+    if (cssVar) return cssVar;
+    // Fallback colors matching design-tokens.js
+    const fallbackColors = [
+      '#6366f1', '#8b5cf6', '#d946ef', '#ec4899', '#f43f5e', '#ef4444',
+      '#f97316', '#eab308', '#22c55e', '#14b8a6', '#06b6d4', '#3b82f6'
+    ];
+    return fallbackColors[colorIndex % fallbackColors.length];
+  }
+
+  /**
+   * Get the text color for a label (for contrast)
+   * @param {string} labelName - Label name
+   * @returns {string} CSS color value
+   */
+  getLabelTextColor(labelName) {
+    const colorIndex = this.labelColors[labelName] !== undefined ? this.labelColors[labelName] : 0;
+    // Use CSS variables if available
+    const style = getComputedStyle(document.documentElement);
+    const cssVar = style.getPropertyValue(`--color-label-textColors-${colorIndex}`).trim();
+    if (cssVar) return cssVar;
+    // Fallback - dark text for yellow and cyan, white for others
+    const fallbackTextColors = [
+      '#ffffff', '#ffffff', '#ffffff', '#ffffff', '#ffffff', '#ffffff',
+      '#ffffff', '#1a1a20', '#ffffff', '#ffffff', '#1a1a20', '#ffffff'
+    ];
+    return fallbackTextColors[colorIndex % fallbackTextColors.length];
+  }
+
+  /**
    * Filter prompts based on search query
    */
   filterPrompts(prompts) {
@@ -615,14 +679,19 @@ class PromptLibrary {
   /**
    * Format elapsed time in human-readable format
    * @param {number} startTime - Timestamp when testing started
-   * @returns {string} Formatted time like "1h 53m" or "5m"
+   * @returns {string} Formatted time like "2d 5h", "1h 53m", or "5m"
    */
   formatElapsedTime(startTime) {
     const elapsed = Date.now() - startTime;
     const minutes = Math.floor(elapsed / 60000);
     const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+    const remainingHours = hours % 24;
     const remainingMinutes = minutes % 60;
 
+    if (days > 0) {
+      return `${days}d ${remainingHours}h`;
+    }
     if (hours > 0) {
       return `${hours}h ${remainingMinutes}m`;
     }
@@ -631,6 +700,8 @@ class PromptLibrary {
 
   /**
    * Render all prompts using safe DOM methods
+   * Section order: Reusable (Global, Project) -> Regular -> Testing -> Done
+   * Favorites sort to top within each section
    */
   renderPrompts() {
     if (!this.promptsContainer) return;
@@ -647,20 +718,44 @@ class PromptLibrary {
     // Apply search filter
     const filteredPrompts = this.filterPrompts(this.prompts);
 
-    // Separate by status: active (not testing, not done), testing, done
-    const activePrompts = filteredPrompts.filter(p => !p.done && !p.testing);
-    const testingPrompts = filteredPrompts.filter(p => p.testing && !p.done);
-    const donePrompts = filteredPrompts.filter(p => p.done);
+    // Categorize prompts by section
+    // Reusable prompts never go to testing/done - combine global and project, global first
+    const reusablePrompts = filteredPrompts.filter(p => p.reusable);
 
-    // Sort testing prompts by testingStartedAt descending (newest first)
-    testingPrompts.sort((a, b) => (b.testingStartedAt || 0) - (a.testingStartedAt || 0));
+    // Non-reusable prompts can be in regular, testing, or done
+    const regularPrompts = filteredPrompts.filter(p => !p.reusable && !p.done && !p.testing);
+    const testingPrompts = filteredPrompts.filter(p => !p.reusable && p.testing && !p.done);
+    const donePrompts = filteredPrompts.filter(p => !p.reusable && p.done);
+
+    // Sort reusable: global first, then favorites, then by order
+    reusablePrompts.sort((a, b) => {
+      // Global prompts first
+      if (a.scope === 'global' && b.scope !== 'global') return -1;
+      if (a.scope !== 'global' && b.scope === 'global') return 1;
+      // Then favorites
+      if (a.isFavorite && !b.isFavorite) return -1;
+      if (!a.isFavorite && b.isFavorite) return 1;
+      return (a.order || 0) - (b.order || 0);
+    });
+
+    // Sort other groups: favorites first, then by order
+    const sortWithFavoritesFirst = (a, b) => {
+      if (a.isFavorite && !b.isFavorite) return -1;
+      if (!a.isFavorite && b.isFavorite) return 1;
+      return (a.order || 0) - (b.order || 0);
+    };
+
+    regularPrompts.sort(sortWithFavoritesFirst);
+
+    // Sort testing prompts by testingStartedAt descending (newest first), favorites first
+    testingPrompts.sort((a, b) => {
+      if (a.isFavorite && !b.isFavorite) return -1;
+      if (!a.isFavorite && b.isFavorite) return 1;
+      return (b.testingStartedAt || 0) - (a.testingStartedAt || 0);
+    });
 
     // Sort done prompts by doneAt descending (newest first)
     donePrompts.sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
-
-    // Separate favorites from active
-    const favorites = activePrompts.filter(p => p.isFavorite);
-    const nonFavorites = activePrompts.filter(p => !p.isFavorite);
 
     // Empty state
     if (filteredPrompts.length === 0) {
@@ -683,27 +778,29 @@ class PromptLibrary {
       return;
     }
 
-    // Render favorites section
-    if (favorites.length > 0) {
-      const favSection = this.createSection('FAVORITES', favorites, this.favoritesCollapsed, (collapsed) => {
-        this.favoritesCollapsed = collapsed;
-      });
-      this.promptsContainer.appendChild(favSection);
+    // 1. Render Reusable section (global prompts first, then project)
+    if (reusablePrompts.length > 0) {
+      const section = this.createSection('REUSABLE', reusablePrompts, this.reusableCollapsed, (collapsed) => {
+        this.reusableCollapsed = collapsed;
+      }, 'reusable');
+      this.promptsContainer.appendChild(section);
     }
 
-    // Render non-favorite prompts directly (no category grouping)
-    nonFavorites.forEach(prompt => {
-      const promptEl = this.createPromptElement(prompt);
-      this.promptsContainer.appendChild(promptEl);
-    });
+    // 2. Render Regular section (non-reusable, active prompts)
+    if (regularPrompts.length > 0) {
+      const section = this.createSection('PROMPTS', regularPrompts, this.regularCollapsed, (collapsed) => {
+        this.regularCollapsed = collapsed;
+      }, 'regular');
+      this.promptsContainer.appendChild(section);
+    }
 
-    // Render testing section
+    // 4. Render Testing section
     if (testingPrompts.length > 0) {
       const testingSection = this.createTestingSection(testingPrompts);
       this.promptsContainer.appendChild(testingSection);
     }
 
-    // Render done section
+    // 5. Render Done section
     if (donePrompts.length > 0) {
       const doneSection = this.createDoneSection(donePrompts);
       this.promptsContainer.appendChild(doneSection);
@@ -735,10 +832,15 @@ class PromptLibrary {
 
   /**
    * Create a collapsible section
+   * @param {string} title - Section title
+   * @param {Array} prompts - Prompts in this section
+   * @param {boolean} collapsed - Initial collapsed state
+   * @param {Function} onToggle - Callback when toggled
+   * @param {string} sectionType - Type identifier for styling (reusable-global, reusable-project, regular)
    */
-  createSection(title, prompts, collapsed, onToggle) {
+  createSection(title, prompts, collapsed, onToggle, sectionType = '') {
     const section = document.createElement('div');
-    section.className = 'prompt-section';
+    section.className = 'prompt-section' + (sectionType ? ` prompt-section-${sectionType}` : '');
 
     // Header
     const header = document.createElement('div');
@@ -758,6 +860,7 @@ class PromptLibrary {
     // Cards container
     const cardsDiv = document.createElement('div');
     cardsDiv.className = 'prompt-section-cards';
+    cardsDiv.dataset.sectionType = sectionType;
     if (collapsed) {
       cardsDiv.style.display = 'none';
     }
@@ -974,80 +1077,120 @@ class PromptLibrary {
    */
   createPromptElement(prompt, isDone = false) {
     const promptEl = document.createElement('div');
-    promptEl.className = 'prompt-card' + (isDone ? ' done' : '') + (prompt.reusable ? ' reusable' : '');
+    promptEl.className = 'prompt-card' + (isDone ? ' done' : '') + (prompt.reusable ? ' compact' : '');
     promptEl.dataset.promptId = prompt.id;
     promptEl.draggable = !isDone;
 
-    // Badges row (top)
-    const badges = document.createElement('div');
-    badges.className = 'prompt-card-badges';
-
-    if (prompt.scope === 'global') {
-      const scopeBadge = document.createElement('span');
-      scopeBadge.className = 'prompt-badge global';
-      scopeBadge.title = 'Global prompt';
-      scopeBadge.appendChild(this.createIcon('globe', 12));
-      badges.appendChild(scopeBadge);
-    }
-
+    // For reusable prompts, show scope icon inline with first text
     if (prompt.reusable && !isDone) {
-      const reusableBadge = document.createElement('span');
-      reusableBadge.className = 'prompt-badge reusable';
-      reusableBadge.title = "Reusable - won't move to Done";
-      reusableBadge.appendChild(this.createIcon('refresh', 12));
-      badges.appendChild(reusableBadge);
-    }
+      // Create a row with scope icon and content
+      const headerRow = document.createElement('div');
+      headerRow.className = 'prompt-card-header-row';
 
-    if (prompt.isFavorite && !isDone) {
-      const favBadge = document.createElement('span');
-      favBadge.className = 'prompt-badge favorite';
-      favBadge.title = 'Favorite';
-      favBadge.appendChild(this.createIcon('star-filled', 12));
-      badges.appendChild(favBadge);
-    }
+      // Scope icon
+      const scopeIcon = document.createElement('span');
+      scopeIcon.className = 'prompt-scope-icon ' + (prompt.scope === 'global' ? 'global' : 'project');
+      scopeIcon.title = prompt.scope === 'global' ? 'Global' : 'Project';
+      scopeIcon.appendChild(this.createIcon(prompt.scope === 'global' ? 'globe' : 'folder', 14));
+      headerRow.appendChild(scopeIcon);
 
-    // Image count badge
-    const imageCount = (prompt.images || []).length;
-    if (imageCount > 0) {
-      const imgBadge = document.createElement('span');
-      imgBadge.className = 'prompt-badge images';
-      imgBadge.title = `${imageCount} image${imageCount > 1 ? 's' : ''} attached`;
-      imgBadge.appendChild(this.createIcon('image', 12));
-      const countSpan = document.createElement('span');
-      countSpan.className = 'prompt-badge-count';
-      countSpan.textContent = imageCount;
-      imgBadge.appendChild(countSpan);
-      badges.appendChild(imgBadge);
-    }
+      // Title or content preview inline
+      const textContent = document.createElement('div');
+      textContent.className = 'prompt-card-inline-content';
 
-    if (badges.children.length > 0) {
-      promptEl.appendChild(badges);
-    }
-
-    // If prompt has an explicit title, show title + description
-    // If no title, show only description-style text (more content visible)
-    if (prompt.title) {
-      const title = document.createElement('div');
-      title.className = 'prompt-card-title';
-      title.textContent = prompt.title;
-      promptEl.appendChild(title);
-
-      // Description preview
-      const content = prompt.prompt || prompt.description || '';
-      if (content) {
-        const desc = document.createElement('div');
-        desc.className = 'prompt-card-description';
-        desc.textContent = content.slice(0, 100) + (content.length > 100 ? '...' : '');
-        promptEl.appendChild(desc);
+      if (prompt.title) {
+        const title = document.createElement('span');
+        title.className = 'prompt-card-inline-title';
+        title.textContent = prompt.title;
+        textContent.appendChild(title);
+      } else {
+        const content = prompt.prompt || prompt.description || '';
+        const preview = document.createElement('span');
+        preview.className = 'prompt-card-inline-preview';
+        preview.textContent = content.slice(0, 60) + (content.length > 60 ? '...' : '');
+        textContent.appendChild(preview);
       }
+
+      // Badges (favorite, images) inline
+      if (prompt.isFavorite) {
+        const favBadge = document.createElement('span');
+        favBadge.className = 'prompt-badge favorite';
+        favBadge.title = 'Favorite';
+        favBadge.appendChild(this.createIcon('star-filled', 12));
+        textContent.appendChild(favBadge);
+      }
+
+      const imageCount = (prompt.images || []).length;
+      if (imageCount > 0) {
+        const imgBadge = document.createElement('span');
+        imgBadge.className = 'prompt-badge images';
+        imgBadge.title = `${imageCount} image${imageCount > 1 ? 's' : ''} attached`;
+        imgBadge.appendChild(this.createIcon('image', 12));
+        const countSpan = document.createElement('span');
+        countSpan.className = 'prompt-badge-count';
+        countSpan.textContent = imageCount;
+        imgBadge.appendChild(countSpan);
+        textContent.appendChild(imgBadge);
+      }
+
+      headerRow.appendChild(textContent);
+      promptEl.appendChild(headerRow);
     } else {
-      // No title - show prompt content in description style (more visible)
-      const content = prompt.prompt || prompt.description || '';
-      if (content) {
-        const desc = document.createElement('div');
-        desc.className = 'prompt-card-description prompt-card-description-only';
-        desc.textContent = content.slice(0, 200) + (content.length > 200 ? '...' : '');
-        promptEl.appendChild(desc);
+      // Non-reusable prompts: original layout with badges on top
+      const badges = document.createElement('div');
+      badges.className = 'prompt-card-badges';
+
+      if (prompt.isFavorite && !isDone) {
+        const favBadge = document.createElement('span');
+        favBadge.className = 'prompt-badge favorite';
+        favBadge.title = 'Favorite';
+        favBadge.appendChild(this.createIcon('star-filled', 12));
+        badges.appendChild(favBadge);
+      }
+
+      // Image count badge
+      const imageCount = (prompt.images || []).length;
+      if (imageCount > 0) {
+        const imgBadge = document.createElement('span');
+        imgBadge.className = 'prompt-badge images';
+        imgBadge.title = `${imageCount} image${imageCount > 1 ? 's' : ''} attached`;
+        imgBadge.appendChild(this.createIcon('image', 12));
+        const countSpan = document.createElement('span');
+        countSpan.className = 'prompt-badge-count';
+        countSpan.textContent = imageCount;
+        imgBadge.appendChild(countSpan);
+        badges.appendChild(imgBadge);
+      }
+
+      if (badges.children.length > 0) {
+        promptEl.appendChild(badges);
+      }
+
+      // If prompt has an explicit title, show title + description
+      // If no title, show only description-style text (more content visible)
+      if (prompt.title) {
+        const title = document.createElement('div');
+        title.className = 'prompt-card-title';
+        title.textContent = prompt.title;
+        promptEl.appendChild(title);
+
+        // Description preview
+        const content = prompt.prompt || prompt.description || '';
+        if (content) {
+          const desc = document.createElement('div');
+          desc.className = 'prompt-card-description';
+          desc.textContent = content.slice(0, 100) + (content.length > 100 ? '...' : '');
+          promptEl.appendChild(desc);
+        }
+      } else {
+        // No title - show prompt content in description style (more visible)
+        const content = prompt.prompt || prompt.description || '';
+        if (content) {
+          const desc = document.createElement('div');
+          desc.className = 'prompt-card-description prompt-card-description-only';
+          desc.textContent = content.slice(0, 200) + (content.length > 200 ? '...' : '');
+          promptEl.appendChild(desc);
+        }
       }
     }
 
@@ -1060,6 +1203,9 @@ class PromptLibrary {
         const labelTag = document.createElement('span');
         labelTag.className = 'prompt-card-label';
         labelTag.textContent = label;
+        // Apply label colors
+        labelTag.style.backgroundColor = this.getLabelBgColor(label);
+        labelTag.style.color = this.getLabelTextColor(label);
         labelsDiv.appendChild(labelTag);
       });
       promptEl.appendChild(labelsDiv);
@@ -1290,15 +1436,15 @@ class PromptLibrary {
   }
 
   /**
-   * Show create prompt modal
+   * Show create prompt modal (now uses inline editor)
    */
   showCreateModal() {
     this.editingPromptId = null;
-    this.showModal('New Prompt', '', '', [], [], false, false, 'project');
+    this.showInlineEditor('New Prompt', '', '', [], [], false, false, 'project');
   }
 
   /**
-   * Show edit prompt modal
+   * Show edit prompt modal (now uses inline editor)
    */
   showEditModal(promptId) {
     const prompt = this.prompts.find(p => p.id === promptId);
@@ -1306,7 +1452,7 @@ class PromptLibrary {
 
     this.editingPromptId = promptId;
     const promptContent = prompt.prompt || prompt.description || '';
-    this.showModal(
+    this.showInlineEditor(
       'Edit Prompt',
       promptContent,
       prompt.title || '',
@@ -1316,6 +1462,701 @@ class PromptLibrary {
       prompt.isFavorite || false,
       prompt.scope || 'project'
     );
+  }
+
+  /**
+   * Build the labels form group with autocomplete
+   * @returns {{ element: HTMLElement, getCurrentLabels: () => string[] }}
+   */
+  buildLabelsFormGroup(initialLabels) {
+    let currentLabels = [...(initialLabels || [])];
+
+    const labelsGroup = document.createElement('div');
+    labelsGroup.className = 'prompt-form-group';
+
+    const labelsLabel = document.createElement('label');
+    labelsLabel.className = 'prompt-form-label';
+    labelsLabel.textContent = 'Labels';
+
+    const labelsContainer = document.createElement('div');
+    labelsContainer.className = 'prompt-labels-container';
+
+    const labelsTagsDiv = document.createElement('div');
+    labelsTagsDiv.className = 'prompt-labels-tags';
+
+    const labelsInputWrapper = document.createElement('div');
+    labelsInputWrapper.className = 'prompt-labels-input-wrapper';
+
+    const labelsInput = document.createElement('input');
+    labelsInput.type = 'text';
+    labelsInput.className = 'prompt-labels-input';
+    labelsInput.placeholder = 'Type label and press Enter...';
+    labelsInput.maxLength = 30;
+
+    const suggestionsDropdown = document.createElement('div');
+    suggestionsDropdown.className = 'prompt-labels-suggestions';
+
+    let highlightedIndex = -1;
+
+    const renderLabelTags = () => {
+      labelsTagsDiv.textContent = '';
+      currentLabels.forEach((label, index) => {
+        const tag = document.createElement('span');
+        tag.className = 'prompt-label-tag';
+        tag.textContent = label;
+        tag.style.backgroundColor = this.getLabelBgColor(label);
+        tag.style.color = this.getLabelTextColor(label);
+
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'prompt-label-remove';
+        removeBtn.textContent = '\u00d7';
+        removeBtn.style.color = this.getLabelTextColor(label);
+        removeBtn.addEventListener('click', () => {
+          currentLabels.splice(index, 1);
+          renderLabelTags();
+        });
+
+        tag.appendChild(removeBtn);
+        labelsTagsDiv.appendChild(tag);
+      });
+    };
+
+    const getFilteredSuggestions = (query) => {
+      const allLabels = this.getAllLabels();
+      const q = query.toLowerCase();
+      return allLabels.filter(label =>
+        label.toLowerCase().includes(q) && !currentLabels.includes(label)
+      );
+    };
+
+    const renderSuggestions = (suggestions) => {
+      suggestionsDropdown.textContent = '';
+      highlightedIndex = -1;
+      if (suggestions.length === 0) {
+        suggestionsDropdown.classList.remove('visible');
+        return;
+      }
+      suggestions.forEach((label, index) => {
+        const item = document.createElement('div');
+        item.className = 'prompt-labels-suggestion';
+        item.dataset.index = index;
+        const query = labelsInput.value.trim().toLowerCase();
+        const labelLower = label.toLowerCase();
+        const matchStart = labelLower.indexOf(query);
+        if (matchStart >= 0 && query) {
+          const before = label.slice(0, matchStart);
+          const match = label.slice(matchStart, matchStart + query.length);
+          const after = label.slice(matchStart + query.length);
+          if (before) item.appendChild(document.createTextNode(before));
+          const matchSpan = document.createElement('span');
+          matchSpan.className = 'match';
+          matchSpan.textContent = match;
+          item.appendChild(matchSpan);
+          if (after) item.appendChild(document.createTextNode(after));
+        } else {
+          item.textContent = label;
+        }
+        item.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          addLabel(label);
+        });
+        suggestionsDropdown.appendChild(item);
+      });
+      suggestionsDropdown.classList.add('visible');
+    };
+
+    const updateHighlight = () => {
+      const items = suggestionsDropdown.querySelectorAll('.prompt-labels-suggestion');
+      items.forEach((item, index) => {
+        item.classList.toggle('highlighted', index === highlightedIndex);
+      });
+      if (highlightedIndex >= 0 && items[highlightedIndex]) {
+        items[highlightedIndex].scrollIntoView({ block: 'nearest' });
+      }
+    };
+
+    const addLabel = (label) => {
+      if (label && !currentLabels.includes(label) && currentLabels.length < 5) {
+        currentLabels.push(label);
+        labelsInput.value = '';
+        suggestionsDropdown.classList.remove('visible');
+        renderLabelTags();
+      }
+    };
+
+    labelsInput.addEventListener('input', () => {
+      const query = labelsInput.value.trim();
+      if (query) {
+        renderSuggestions(getFilteredSuggestions(query));
+      } else {
+        suggestionsDropdown.classList.remove('visible');
+      }
+    });
+
+    labelsInput.addEventListener('keydown', (e) => {
+      const suggestions = getFilteredSuggestions(labelsInput.value.trim());
+      const isDropdownVisible = suggestionsDropdown.classList.contains('visible');
+      if (e.key === 'ArrowDown' && isDropdownVisible) {
+        e.preventDefault();
+        highlightedIndex = Math.min(highlightedIndex + 1, suggestions.length - 1);
+        updateHighlight();
+      } else if (e.key === 'ArrowUp' && isDropdownVisible) {
+        e.preventDefault();
+        highlightedIndex = Math.max(highlightedIndex - 1, 0);
+        updateHighlight();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (isDropdownVisible && highlightedIndex >= 0 && suggestions[highlightedIndex]) {
+          addLabel(suggestions[highlightedIndex]);
+        } else {
+          addLabel(labelsInput.value.trim());
+        }
+      } else if (e.key === 'Escape') {
+        suggestionsDropdown.classList.remove('visible');
+      }
+    });
+
+    labelsInput.addEventListener('blur', () => {
+      setTimeout(() => suggestionsDropdown.classList.remove('visible'), 150);
+    });
+
+    labelsInput.addEventListener('focus', () => {
+      const query = labelsInput.value.trim();
+      if (query) {
+        renderSuggestions(getFilteredSuggestions(query));
+      }
+    });
+
+    labelsInputWrapper.appendChild(labelsInput);
+    labelsInputWrapper.appendChild(suggestionsDropdown);
+    labelsContainer.appendChild(labelsTagsDiv);
+    labelsContainer.appendChild(labelsInputWrapper);
+    labelsGroup.appendChild(labelsLabel);
+    labelsGroup.appendChild(labelsContainer);
+    renderLabelTags();
+
+    return { element: labelsGroup, getCurrentLabels: () => [...currentLabels] };
+  }
+
+  /**
+   * Build the images form group with thumbnails, drag-drop, paste
+   * @param {HTMLElement} pasteTarget - Element to attach paste listener to
+   * @returns {{ element: HTMLElement, getCurrentImages: () => Array }}
+   */
+  buildImagesFormGroup(initialImages, pasteTarget) {
+    let currentImages = [...(initialImages || [])];
+
+    const imagesGroup = document.createElement('div');
+    imagesGroup.className = 'prompt-form-group';
+
+    const imagesLabelRow = document.createElement('div');
+    imagesLabelRow.className = 'prompt-images-label-row';
+
+    const imagesLabel = document.createElement('label');
+    imagesLabel.className = 'prompt-form-label';
+    imagesLabel.textContent = 'Images';
+
+    const addImageBtn = document.createElement('button');
+    addImageBtn.type = 'button';
+    addImageBtn.className = 'prompt-add-image-btn';
+    addImageBtn.title = 'Add images';
+    addImageBtn.appendChild(this.createIcon('plus', 14));
+    const addImageText = document.createElement('span');
+    addImageText.textContent = 'Add';
+    addImageBtn.appendChild(addImageText);
+
+    imagesLabelRow.appendChild(imagesLabel);
+    imagesLabelRow.appendChild(addImageBtn);
+
+    const imagesContainer = document.createElement('div');
+    imagesContainer.className = 'prompt-images-container';
+
+    const imagesThumbnails = document.createElement('div');
+    imagesThumbnails.className = 'prompt-images-thumbnails';
+
+    const imagesDropZone = document.createElement('div');
+    imagesDropZone.className = 'prompt-images-drop-zone';
+    imagesDropZone.textContent = 'Drop images here, paste, or click Add';
+
+    const renderImageThumbnails = async () => {
+      imagesThumbnails.textContent = '';
+      if (currentImages.length === 0) {
+        imagesDropZone.style.display = 'block';
+        imagesThumbnails.style.display = 'none';
+        return;
+      }
+      imagesDropZone.style.display = 'none';
+      imagesThumbnails.style.display = 'flex';
+      for (const img of currentImages) {
+        const thumb = document.createElement('div');
+        thumb.className = 'prompt-image-thumb';
+        const imgEl = document.createElement('img');
+        let thumbnailLoaded = false;
+        if (window.electronAPI?.promptLibrary?.getImageThumbnail) {
+          try {
+            const dataUrl = await window.electronAPI.promptLibrary.getImageThumbnail(img.id);
+            if (dataUrl) { imgEl.src = dataUrl; thumbnailLoaded = true; }
+          } catch (err) { console.error('Failed to load thumbnail:', err); }
+        }
+        if (!thumbnailLoaded) thumb.classList.add('thumbnail-error');
+        imgEl.alt = img.filename || 'Image';
+        imgEl.title = img.filename || 'Image';
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'prompt-image-remove';
+        removeBtn.title = 'Remove image';
+        removeBtn.appendChild(this.createIcon('x', 12));
+        removeBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const idx = currentImages.findIndex(i => i.id === img.id);
+          if (idx !== -1) { currentImages.splice(idx, 1); await renderImageThumbnails(); }
+        });
+        thumb.appendChild(imgEl);
+        thumb.appendChild(removeBtn);
+        imagesThumbnails.appendChild(thumb);
+      }
+    };
+
+    const addImageFromPath = async (filePath) => {
+      if (currentImages.length >= 10) { alert('Maximum of 10 images per prompt'); return; }
+      if (window.electronAPI?.promptLibrary?.addImage) {
+        const result = await window.electronAPI.promptLibrary.addImage(filePath);
+        if (result.success && result.image) { currentImages.push(result.image); await renderImageThumbnails(); }
+        else if (result.error) { alert('Failed to add image: ' + result.error); }
+      }
+    };
+
+    const addImageFromDataUrl = async (dataUrl) => {
+      if (currentImages.length >= 10) { alert('Maximum of 10 images per prompt'); return; }
+      if (window.electronAPI?.promptLibrary?.addImageFromDataUrl) {
+        const result = await window.electronAPI.promptLibrary.addImageFromDataUrl(dataUrl);
+        if (result.success && result.image) { currentImages.push(result.image); await renderImageThumbnails(); }
+        else if (result.error) { alert('Failed to add image: ' + result.error); }
+      }
+    };
+
+    addImageBtn.addEventListener('click', async () => {
+      if (window.electronAPI?.promptLibrary?.pickImageFiles) {
+        const result = await window.electronAPI.promptLibrary.pickImageFiles();
+        if (!result.canceled && result.filePaths) {
+          for (const filePath of result.filePaths) { await addImageFromPath(filePath); }
+        }
+      }
+    });
+
+    imagesContainer.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); imagesContainer.classList.add('drag-over'); });
+    imagesContainer.addEventListener('dragleave', (e) => { e.preventDefault(); e.stopPropagation(); imagesContainer.classList.remove('drag-over'); });
+    imagesContainer.addEventListener('drop', async (e) => {
+      e.preventDefault(); e.stopPropagation(); imagesContainer.classList.remove('drag-over');
+      const files = e.dataTransfer.files;
+      for (const file of files) { if (file.type.startsWith('image/')) { await addImageFromPath(file.path); } }
+    });
+
+    if (pasteTarget) {
+      pasteTarget.addEventListener('paste', async (e) => {
+        const items = e.clipboardData?.items;
+        if (!items) return;
+        for (const item of items) {
+          if (item.type.startsWith('image/')) {
+            e.preventDefault();
+            const blob = item.getAsFile();
+            if (blob) {
+              const reader = new FileReader();
+              reader.onload = async () => { await addImageFromDataUrl(reader.result); };
+              reader.readAsDataURL(blob);
+            }
+            break;
+          }
+        }
+      });
+    }
+
+    imagesContainer.appendChild(imagesThumbnails);
+    imagesContainer.appendChild(imagesDropZone);
+    imagesGroup.appendChild(imagesLabelRow);
+    imagesGroup.appendChild(imagesContainer);
+    renderImageThumbnails();
+
+    return { element: imagesGroup, getCurrentImages: () => [...currentImages] };
+  }
+
+  /**
+   * Build the options row (reusable, favorite, scope)
+   * @returns {{ element: HTMLElement, getValues: () => { reusable: boolean, favorite: boolean, scope: string } }}
+   */
+  buildOptionsRow(isReusable, isFavorite, scope) {
+    const optionsRow = document.createElement('div');
+    optionsRow.className = 'prompt-form-options';
+
+    const reusableGroup = document.createElement('div');
+    reusableGroup.className = 'prompt-form-checkbox';
+    const reusableInput = document.createElement('input');
+    reusableInput.type = 'checkbox';
+    reusableInput.id = 'prompt-reusable-input';
+    reusableInput.checked = isReusable;
+    const reusableLabel = document.createElement('label');
+    reusableLabel.htmlFor = 'prompt-reusable-input';
+    reusableLabel.textContent = 'Reusable';
+    reusableGroup.appendChild(reusableInput);
+    reusableGroup.appendChild(reusableLabel);
+
+    const favoriteGroup = document.createElement('div');
+    favoriteGroup.className = 'prompt-form-checkbox';
+    const favoriteInput = document.createElement('input');
+    favoriteInput.type = 'checkbox';
+    favoriteInput.id = 'prompt-favorite-input';
+    favoriteInput.checked = isFavorite;
+    const favoriteLabel = document.createElement('label');
+    favoriteLabel.htmlFor = 'prompt-favorite-input';
+    favoriteLabel.textContent = 'Favorite';
+    favoriteGroup.appendChild(favoriteInput);
+    favoriteGroup.appendChild(favoriteLabel);
+
+    const scopeGroup = document.createElement('div');
+    scopeGroup.className = 'prompt-form-scope-group';
+    const scopeLabel = document.createElement('label');
+    scopeLabel.className = 'prompt-form-scope-label';
+    scopeLabel.htmlFor = 'prompt-scope-select';
+    scopeLabel.textContent = 'Scope:';
+    const scopeSelect = document.createElement('select');
+    scopeSelect.className = 'prompt-form-input prompt-form-select prompt-scope-select';
+    scopeSelect.id = 'prompt-scope-select';
+    const projectOption = document.createElement('option');
+    projectOption.value = 'project';
+    projectOption.textContent = 'Project';
+    if (scope === 'project') projectOption.selected = true;
+    const globalOption = document.createElement('option');
+    globalOption.value = 'global';
+    globalOption.textContent = 'Global';
+    if (scope === 'global') globalOption.selected = true;
+    scopeSelect.appendChild(projectOption);
+    scopeSelect.appendChild(globalOption);
+
+    const updateReusableForScope = () => {
+      if (scopeSelect.value === 'global') {
+        reusableInput.checked = true;
+        reusableInput.disabled = true;
+        reusableGroup.classList.add('disabled');
+        reusableGroup.title = 'Global prompts are always reusable';
+      } else {
+        reusableInput.disabled = false;
+        reusableGroup.classList.remove('disabled');
+        reusableGroup.title = '';
+      }
+    };
+    scopeSelect.addEventListener('change', updateReusableForScope);
+    updateReusableForScope();
+
+    scopeGroup.appendChild(scopeLabel);
+    scopeGroup.appendChild(scopeSelect);
+    optionsRow.appendChild(reusableGroup);
+    optionsRow.appendChild(favoriteGroup);
+    optionsRow.appendChild(scopeGroup);
+
+    return {
+      element: optionsRow,
+      getValues: () => ({
+        reusable: reusableInput.checked,
+        favorite: favoriteInput.checked,
+        scope: scopeSelect.value
+      })
+    };
+  }
+
+  /**
+   * Show inline editor inside the prompt panel
+   */
+  showInlineEditor(editorTitle, promptContent, promptTitle, labels, images, isReusable, isFavorite, scope) {
+    // Close any existing inline editor first
+    const existingEditor = this.panel.querySelector('.prompt-inline-editor');
+    if (existingEditor) existingEditor.remove();
+
+    this.isInlineEditing = true;
+    this.preEditPanelWidth = this.panelWidth;
+
+    // Auto-open panel if collapsed
+    if (!this.panelVisible) {
+      this.panelVisible = true;
+      this.updatePanelVisibility();
+      this.savePanelState();
+    }
+
+    // Widen panel for editing, capped at 50% of layout
+    const layoutWidth = document.getElementById('terminal-layout')?.offsetWidth || window.innerWidth;
+    const maxWidth = Math.floor(layoutWidth * 0.5);
+    const editWidth = Math.min(maxWidth, Math.max(this.panelWidth, 450));
+    this.panel.style.width = `${editWidth}px`;
+    this.panelWidth = editWidth;
+    this.panel.classList.add('editing');
+
+    // Hide normal panel content
+    const searchContainer = document.getElementById('prompt-search-container');
+    const cardsContainer = document.getElementById('prompt-cards-container');
+    const panelHeader = document.getElementById('prompt-panel-header');
+    if (searchContainer) searchContainer.style.display = 'none';
+    if (cardsContainer) cardsContainer.style.display = 'none';
+    if (panelHeader) panelHeader.style.display = 'none';
+
+    // Create inline editor
+    const editor = document.createElement('div');
+    editor.className = 'prompt-inline-editor';
+
+    // Header with back button
+    const header = document.createElement('div');
+    header.className = 'inline-editor-header';
+
+    const backBtn = document.createElement('button');
+    backBtn.className = 'inline-editor-back';
+    backBtn.title = 'Back to prompts';
+    // Left arrow icon
+    const arrowSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    arrowSvg.setAttribute('width', '16');
+    arrowSvg.setAttribute('height', '16');
+    arrowSvg.setAttribute('viewBox', '0 0 24 24');
+    arrowSvg.setAttribute('fill', 'none');
+    arrowSvg.setAttribute('stroke', 'currentColor');
+    arrowSvg.setAttribute('stroke-width', '2');
+    arrowSvg.setAttribute('stroke-linecap', 'round');
+    arrowSvg.setAttribute('stroke-linejoin', 'round');
+    const arrowPath = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    arrowPath.setAttribute('points', '15 18 9 12 15 6');
+    arrowSvg.appendChild(arrowPath);
+    backBtn.appendChild(arrowSvg);
+
+    const titleEl = document.createElement('span');
+    titleEl.className = 'inline-editor-title';
+    titleEl.textContent = editorTitle;
+
+    header.appendChild(backBtn);
+    header.appendChild(titleEl);
+
+    // Scrollable body
+    const body = document.createElement('div');
+    body.className = 'inline-editor-body';
+
+    // Title input
+    const titleGroup = document.createElement('div');
+    titleGroup.className = 'prompt-form-group';
+    const titleLabel = document.createElement('label');
+    titleLabel.className = 'prompt-form-label';
+    titleLabel.textContent = 'Title (optional)';
+    const titleHint = document.createElement('span');
+    titleHint.className = 'prompt-form-hint';
+    titleHint.textContent = 'Display name only';
+    const titleInput = document.createElement('input');
+    titleInput.type = 'text';
+    titleInput.className = 'prompt-form-input';
+    titleInput.placeholder = 'Display name...';
+    titleInput.maxLength = 100;
+    titleInput.value = promptTitle;
+    titleGroup.appendChild(titleLabel);
+    titleGroup.appendChild(titleHint);
+    titleGroup.appendChild(titleInput);
+
+    // Prompt textarea
+    const promptGroup = document.createElement('div');
+    promptGroup.className = 'prompt-form-group';
+    promptGroup.style.flex = '1';
+    promptGroup.style.display = 'flex';
+    promptGroup.style.flexDirection = 'column';
+    const promptLabel = document.createElement('label');
+    promptLabel.className = 'prompt-form-label';
+    promptLabel.textContent = 'Prompt';
+    const promptInput = document.createElement('textarea');
+    promptInput.className = 'prompt-form-input prompt-form-textarea';
+    promptInput.placeholder = 'Enter the prompt to send to Claude...';
+    promptInput.maxLength = 20000;
+    promptInput.value = promptContent;
+    promptGroup.appendChild(promptLabel);
+    promptGroup.appendChild(promptInput);
+
+    // Build helpers (labels, images, options)
+    const labelsHelper = this.buildLabelsFormGroup(labels);
+    const imagesHelper = this.buildImagesFormGroup(images, editor);
+    const optionsHelper = this.buildOptionsRow(isReusable, isFavorite, scope);
+
+    body.appendChild(titleGroup);
+    body.appendChild(promptGroup);
+    body.appendChild(labelsHelper.element);
+    body.appendChild(imagesHelper.element);
+    body.appendChild(optionsHelper.element);
+
+    // Footer with save/cancel
+    const footer = document.createElement('div');
+    footer.className = 'inline-editor-footer';
+
+    // Left group: Save & Send
+    const footerLeft = document.createElement('div');
+    footerLeft.className = 'inline-editor-footer-left';
+
+    const saveAndSendBtn = document.createElement('button');
+    saveAndSendBtn.className = 'prompt-modal-btn save-and-send';
+    saveAndSendBtn.title = 'Save prompt, send to terminal, and move to Testing';
+
+    const saveAndSendIcon = document.createElement('span');
+    saveAndSendIcon.className = 'save-and-send-icon';
+    saveAndSendIcon.textContent = '←';
+    const saveAndSendLabel = document.createElement('span');
+    saveAndSendLabel.textContent = 'Save & Send';
+    saveAndSendBtn.appendChild(saveAndSendIcon);
+    saveAndSendBtn.appendChild(saveAndSendLabel);
+
+    footerLeft.appendChild(saveAndSendBtn);
+
+    // Right group: Cancel + Save
+    const footerRight = document.createElement('div');
+    footerRight.className = 'inline-editor-footer-right';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'prompt-modal-btn cancel';
+    cancelBtn.textContent = 'Cancel';
+
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'prompt-modal-btn primary';
+    saveBtn.textContent = 'Save';
+
+    footerRight.appendChild(cancelBtn);
+    footerRight.appendChild(saveBtn);
+
+    footer.appendChild(footerLeft);
+    footer.appendChild(footerRight);
+
+    // Assemble editor
+    editor.appendChild(header);
+    editor.appendChild(body);
+    editor.appendChild(footer);
+
+    // Insert into panel
+    this.panel.appendChild(editor);
+
+    // Focus textarea
+    promptInput.focus();
+
+    // Wire up events
+    backBtn.addEventListener('click', () => this.closeInlineEditor());
+    cancelBtn.addEventListener('click', () => this.closeInlineEditor());
+
+    const doSave = async () => {
+      const newPromptContent = promptInput.value.trim();
+      const newTitle = titleInput.value.trim() || null;
+      const newLabels = labelsHelper.getCurrentLabels();
+      const newImages = imagesHelper.getCurrentImages();
+      const opts = optionsHelper.getValues();
+
+      if (!newPromptContent) {
+        promptInput.focus();
+        return;
+      }
+
+      await this.savePrompt(newPromptContent, newTitle, newLabels, newImages, opts.reusable, opts.favorite, opts.scope);
+    };
+
+    saveBtn.addEventListener('click', doSave);
+
+    // Save & Send: save, then send to terminal and mark as testing
+    const doSaveAndSend = async () => {
+      const newPromptContent = promptInput.value.trim();
+      const newTitle = titleInput.value.trim() || null;
+      const newLabels = labelsHelper.getCurrentLabels();
+      const newImages = imagesHelper.getCurrentImages();
+      const opts = optionsHelper.getValues();
+
+      if (!newPromptContent) {
+        promptInput.focus();
+        return;
+      }
+
+      try {
+        let savedPrompt;
+        if (this.editingPromptId) {
+          await window.electronAPI.promptLibrary.updatePrompt(this.editingPromptId, {
+            prompt: newPromptContent,
+            title: newTitle,
+            labels: newLabels,
+            images: newImages,
+            reusable: opts.reusable,
+            isFavorite: opts.favorite,
+            scope: opts.scope
+          });
+          savedPrompt = { id: this.editingPromptId, prompt: newPromptContent, title: newTitle, images: newImages, reusable: opts.reusable };
+        } else {
+          savedPrompt = await window.electronAPI.promptLibrary.createPrompt({
+            prompt: newPromptContent,
+            title: newTitle,
+            labels: newLabels,
+            images: newImages,
+            reusable: opts.reusable,
+            isFavorite: opts.favorite,
+            scope: opts.scope
+          });
+        }
+
+        this.closeModal();
+
+        if (savedPrompt) {
+          // Send to terminal
+          await this.insertPromptAsInput(savedPrompt);
+
+          // Mark as testing (unless reusable)
+          if (!savedPrompt.reusable) {
+            await this.markPromptTesting(savedPrompt.id);
+          } else {
+            await this.loadPrompts();
+          }
+        } else {
+          await this.loadPrompts();
+        }
+      } catch (err) {
+        console.error('Failed to save & send prompt:', err);
+        alert('Failed to save & send prompt: ' + err.message);
+      }
+    };
+
+    saveAndSendBtn.addEventListener('click', doSaveAndSend);
+
+    // Cmd+Enter to save
+    promptInput.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+        e.preventDefault();
+        doSave();
+      }
+    });
+
+    // Update save button state
+    const updateSaveBtn = () => {
+      const hasContent = !!promptInput.value.trim();
+      saveBtn.disabled = !hasContent;
+      saveAndSendBtn.disabled = !hasContent;
+    };
+    promptInput.addEventListener('input', updateSaveBtn);
+    updateSaveBtn();
+  }
+
+  /**
+   * Close the inline editor and restore panel
+   */
+  closeInlineEditor() {
+    const editor = this.panel.querySelector('.prompt-inline-editor');
+    if (editor) editor.remove();
+
+    // Restore panel width
+    if (this.preEditPanelWidth !== null) {
+      this.panelWidth = this.preEditPanelWidth;
+      this.panel.style.width = `${this.panelWidth}px`;
+      this.preEditPanelWidth = null;
+    }
+    this.panel.classList.remove('editing');
+
+    // Show normal panel content
+    const searchContainer = document.getElementById('prompt-search-container');
+    const cardsContainer = document.getElementById('prompt-cards-container');
+    const panelHeader = document.getElementById('prompt-panel-header');
+    if (searchContainer) searchContainer.style.display = '';
+    if (cardsContainer) cardsContainer.style.display = '';
+    if (panelHeader) panelHeader.style.display = '';
+
+    this.isInlineEditing = false;
+    this.editingPromptId = null;
   }
 
   /**
@@ -1373,7 +2214,7 @@ class PromptLibrary {
     promptInput.className = 'prompt-form-input prompt-form-textarea';
     promptInput.id = 'prompt-content-input';
     promptInput.placeholder = 'Enter the prompt to send to Claude...';
-    promptInput.maxLength = 5000;
+    promptInput.maxLength = 20000;
     promptInput.value = promptContent;
 
     promptGroup.appendChild(promptLabel);
@@ -1445,10 +2286,14 @@ class PromptLibrary {
         const tag = document.createElement('span');
         tag.className = 'prompt-label-tag';
         tag.textContent = label;
+        // Apply label colors
+        tag.style.backgroundColor = this.getLabelBgColor(label);
+        tag.style.color = this.getLabelTextColor(label);
 
         const removeBtn = document.createElement('button');
         removeBtn.className = 'prompt-label-remove';
         removeBtn.textContent = '×';
+        removeBtn.style.color = this.getLabelTextColor(label); // Match text color
         removeBtn.addEventListener('click', () => {
           currentLabels.splice(index, 1);
           renderLabelTags();
@@ -1860,6 +2705,24 @@ class PromptLibrary {
     scopeSelect.appendChild(projectOption);
     scopeSelect.appendChild(globalOption);
 
+    // Auto-enable reusable when Global is selected
+    const updateReusableForScope = () => {
+      if (scopeSelect.value === 'global') {
+        reusableInput.checked = true;
+        reusableInput.disabled = true;
+        reusableGroup.classList.add('disabled');
+        reusableGroup.title = 'Global prompts are always reusable';
+      } else {
+        reusableInput.disabled = false;
+        reusableGroup.classList.remove('disabled');
+        reusableGroup.title = '';
+      }
+    };
+
+    scopeSelect.addEventListener('change', updateReusableForScope);
+    // Apply initial state
+    updateReusableForScope();
+
     scopeGroup.appendChild(scopeLabel);
     scopeGroup.appendChild(scopeSelect);
 
@@ -1943,9 +2806,13 @@ class PromptLibrary {
   }
 
   /**
-   * Close modal dialog
+   * Close modal dialog (or inline editor)
    */
   closeModal() {
+    if (this.isInlineEditing) {
+      this.closeInlineEditor();
+      return;
+    }
     const modal = document.querySelector('.prompt-modal-overlay');
     if (modal) {
       modal.remove();

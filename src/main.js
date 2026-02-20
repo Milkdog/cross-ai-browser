@@ -1144,7 +1144,7 @@ ipcMain.handle('show-tab-context-menu', async (event, tabId) => {
     ];
 
     // Add Restart Claude option for terminal tabs
-    if (tab.type === 'claude-code') {
+    if (tab.serviceType === 'claude-code') {
       template.push({ type: 'separator' });
       template.push({
         label: 'Restart Claude',

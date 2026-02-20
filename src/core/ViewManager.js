@@ -11,6 +11,7 @@
 const { BrowserView, dialog, shell } = require('electron');
 const path = require('path');
 const os = require('os');
+const fs = require('fs');
 const { execFile } = require('child_process');
 const { getServiceType } = require('./ServiceRegistry');
 
@@ -531,10 +532,24 @@ class ViewManager {
         '/opt/homebrew/bin',
         `${homedir}/.local/bin`,
         `${homedir}/.npm-global/bin`,
-        `${homedir}/.nvm/versions/node/*/bin`,
+        `${homedir}/.volta/bin`,
         '/usr/local/opt/node/bin'
-      ].join(':');
-      env.PATH = `${additionalPaths}:${env.PATH || '/usr/bin:/bin'}`;
+      ];
+
+      // Resolve nvm node version directory (glob doesn't work in PATH strings)
+      const nvmVersionsDir = path.join(homedir, '.nvm', 'versions', 'node');
+      try {
+        const versions = fs.readdirSync(nvmVersionsDir);
+        if (versions.length > 0) {
+          // Use the last (highest) version
+          const latest = versions.sort().pop();
+          additionalPaths.push(path.join(nvmVersionsDir, latest, 'bin'));
+        }
+      } catch (e) {
+        // nvm not installed, skip
+      }
+
+      env.PATH = `${additionalPaths.join(':')}:${env.PATH || '/usr/bin:/bin'}`;
     }
 
     try {

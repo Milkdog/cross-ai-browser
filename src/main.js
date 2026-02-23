@@ -4,18 +4,9 @@ const fs = require('fs');
 const crypto = require('crypto');
 const Store = require('electron-store');
 
-// Wrap console methods to handle EPIPE errors (occurs in packaged apps launched from Finder)
-['log', 'warn', 'error', 'info', 'debug'].forEach(method => {
-  const original = console[method];
-  console[method] = (...args) => {
-    try {
-      original.apply(console, args);
-    } catch (err) {
-      // Ignore EPIPE errors - stdout/stderr pipe is closed
-      if (err.code !== 'EPIPE') throw err;
-    }
-  };
-});
+// Handle EPIPE errors on stdout/stderr (occurs when parent process closes pipe)
+process.stdout?.on('error', (err) => { if (err.code !== 'EPIPE') throw err; });
+process.stderr?.on('error', (err) => { if (err.code !== 'EPIPE') throw err; });
 
 // Import core modules
 const { SERVICE_TYPES, getServiceType, isValidServiceType, isTerminalAvailable } = require('./core/ServiceRegistry');
@@ -325,24 +316,19 @@ function createWindow() {
   }
 
   // Handle real-time prompt changes from Firebase (e.g., from PWA)
-  firebaseSyncAdapter.on('remote-prompt-changed', (remotePrompt) => {
-    console.log('[Main] Queued remote-prompt-changed:', remotePrompt.id, remotePrompt.title);
+  let remoteSyncAppliedCount = 0;
+  let remoteSyncLogTimer = null;
 
+  firebaseSyncAdapter.on('remote-prompt-changed', (remotePrompt) => {
     // Add to queue instead of processing immediately
     remoteSyncQueue.push(async () => {
-      if (!promptLibraryManager) {
-        console.warn('[Main] promptLibraryManager not initialized');
-        return;
-      }
+      if (!promptLibraryManager) return;
 
       const { id, projectId, scope, title, prompt, labels, isFavorite, reusable, done, testing, order } = remotePrompt;
 
       // Resolve projectId to cwd
       const cwd = await firebaseSyncAdapter.resolveProjectIdToCwd(projectId);
-      if (!cwd) {
-        console.warn('[Main] Could not resolve projectId to cwd:', projectId);
-        return;
-      }
+      if (!cwd) return;
 
       // Check if this prompt already exists locally
       const existingPrompt = promptLibraryManager.getPromptById(cwd, id);
@@ -361,14 +347,18 @@ function createWindow() {
       };
 
       if (existingPrompt) {
-        // Update existing prompt
         await promptLibraryManager.updatePromptFromRemote(cwd, id, promptData);
       } else {
-        // Create new prompt
         await promptLibraryManager.createPromptFromRemote(cwd, promptData);
       }
 
-      console.log('[Main] Applied remote prompt change:', id);
+      // Batch log applied changes
+      remoteSyncAppliedCount++;
+      clearTimeout(remoteSyncLogTimer);
+      remoteSyncLogTimer = setTimeout(() => {
+        console.log(`[Main] Applied ${remoteSyncAppliedCount} remote prompt change(s)`);
+        remoteSyncAppliedCount = 0;
+      }, 500);
     });
 
     // Start processing queue
@@ -1143,12 +1133,16 @@ ipcMain.handle('show-tab-context-menu', async (event, tabId) => {
       }
     ];
 
-    // Add Restart Claude option for terminal tabs
+    // Add Restart/Shutdown Claude options for terminal tabs
     if (tab.serviceType === 'claude-code') {
       template.push({ type: 'separator' });
       template.push({
         label: 'Restart Claude',
         click: () => resolve('restart')
+      });
+      template.push({
+        label: 'Shutdown Claude',
+        click: () => resolve('shutdown')
       });
     }
 
@@ -1279,6 +1273,12 @@ ipcMain.on('terminal-resume', (event, { terminalId }) => {
     console.error(`terminal-resume: No cwd for tab ${terminalId}`);
     // Send error to terminal UI
     viewManager.sendTerminalMessage(terminalId, '\x1b[31mError: No working directory configured. Please close this tab and create a new one.\x1b[0m\r\n');
+  }
+});
+
+ipcMain.on('terminal-shutdown', (event, { terminalId }) => {
+  if (viewManager) {
+    viewManager.shutdownTerminal(terminalId);
   }
 });
 

@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   addTerminal: () => ipcRenderer.invoke('add-terminal'),
   closeTerminal: (terminalId) => ipcRenderer.send('close-terminal', terminalId),
   restartTerminal: (terminalId) => ipcRenderer.send('terminal-reload', { terminalId }),
+  shutdownTerminal: (terminalId) => ipcRenderer.send('terminal-shutdown', { terminalId }),
 
   // Navigation controls
   reloadService: (tabId) => ipcRenderer.send('reload-service', tabId),

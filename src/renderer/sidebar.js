@@ -1,5 +1,3 @@
-console.log('sidebar.js loaded');
-
 // State
 let activeDownloads = [];
 let downloadHistory = [];
@@ -33,11 +31,8 @@ let draggedTabId = null;
 let settingsActive = false;
 
 async function init() {
-  console.log('init() called');
-
   // Load all tabs
   allTabs = await window.electronAPI.getAllTabs();
-  console.log('tabs loaded:', allTabs);
 
   renderTabs(allTabs);
 
@@ -248,6 +243,8 @@ function renderTabs(tabs) {
         window.electronAPI.showRenameDialog(tab.id);
       } else if (action === 'restart') {
         window.electronAPI.restartTerminal(tab.id);
+      } else if (action === 'shutdown') {
+        window.electronAPI.shutdownTerminal(tab.id);
       } else if (action === 'close') {
         window.electronAPI.closeTab(tab.id);
       }

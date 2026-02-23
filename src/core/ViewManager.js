@@ -644,7 +644,12 @@ class ViewManager {
    * @private
    */
   _handlePtyExit(tabId, exitCode, signal) {
-    console.log(`Terminal ${tabId} process exited with code ${exitCode}, signal ${signal}`);
+    if (exitCode !== 0 && !this._lastExitLogged?.has(tabId)) {
+      console.warn(`Terminal ${tabId} exited with code ${exitCode}`);
+      if (!this._lastExitLogged) this._lastExitLogged = new Set();
+      this._lastExitLogged.add(tabId);
+      setTimeout(() => this._lastExitLogged?.delete(tabId), 5000);
+    }
 
     // End history session
     const sessionId = this.terminalSessions.get(tabId);
@@ -837,12 +842,13 @@ class ViewManager {
       if (fiveHour) {
         const percentUsed = Math.round(fiveHour.utilization || 0);
         const timeLeft = this._formatTimeRemaining(fiveHour.resets_at);
-        return { percentUsed, timeLeft };
+        const timeElapsedPercent = this._calcTimeElapsedPercent(fiveHour.resets_at, 5 * 60);
+        return { percentUsed, timeLeft, timeElapsedPercent };
       }
     } catch (e) {
       console.error('Error parsing session data:', e);
     }
-    return { percentUsed: 0, timeLeft: '--' };
+    return { percentUsed: 0, timeLeft: '--', timeElapsedPercent: null };
   }
 
   _parseWeeklyData(apiData) {
@@ -851,12 +857,35 @@ class ViewManager {
       if (sevenDay) {
         const percentUsed = Math.round(sevenDay.utilization || 0);
         const timeLeft = this._formatTimeRemaining(sevenDay.resets_at);
-        return { percentUsed, timeLeft };
+        const timeElapsedPercent = this._calcTimeElapsedPercent(sevenDay.resets_at, 7 * 24 * 60);
+        return { percentUsed, timeLeft, timeElapsedPercent };
       }
     } catch (e) {
       console.error('Error parsing weekly data:', e);
     }
-    return { percentUsed: 0, timeLeft: '--' };
+    return { percentUsed: 0, timeLeft: '--', timeElapsedPercent: null };
+  }
+
+  /**
+   * Calculate what percentage of a usage window has elapsed
+   * @param {string} resetTimeStr - ISO timestamp when the window resets
+   * @param {number} windowMinutes - Total window duration in minutes
+   * @returns {number|null} Percentage elapsed (0-100), or null if unknown
+   * @private
+   */
+  _calcTimeElapsedPercent(resetTimeStr, windowMinutes) {
+    if (!resetTimeStr) return null;
+    try {
+      const resetTime = new Date(resetTimeStr);
+      const now = new Date();
+      const timeLeftMs = resetTime - now;
+      if (timeLeftMs <= 0) return 100;
+      const windowMs = windowMinutes * 60 * 1000;
+      const elapsedMs = windowMs - timeLeftMs;
+      return Math.max(0, Math.min(100, (elapsedMs / windowMs) * 100));
+    } catch (e) {
+      return null;
+    }
   }
 
   _formatTimeRemaining(resetTimeStr) {
@@ -971,6 +1000,46 @@ class ViewManager {
     const { cols = 80, rows = 30 } = promptState;
 
     this.setupTerminalPty(tabId, cwd, cols, rows, 'normal');
+  }
+
+  /**
+   * Shutdown a terminal (kill PTY without destroying the view or tab)
+   * @param {string} tabId - The tab ID
+   */
+  shutdownTerminal(tabId) {
+    // Kill existing PTY
+    const existingPty = this.terminalPtys.get(tabId);
+    if (existingPty) {
+      existingPty.kill();
+      this.terminalPtys.delete(tabId);
+    }
+
+    // End history session
+    const sessionId = this.terminalSessions.get(tabId);
+    if (sessionId && this.historyManager) {
+      this.historyManager.endSession(sessionId, -1).catch(err => {
+        console.error(`Failed to save history session ${sessionId}:`, err);
+      });
+      this.terminalSessions.delete(tabId);
+    }
+
+    // Clear prompt state tracking
+    const promptState = this.terminalPromptState.get(tabId);
+    if (promptState) {
+      promptState.recentOutput = '';
+    }
+
+    // Send shutdown message to terminal view
+    const view = this.terminalViews.get(tabId);
+    if (view && !view.webContents.isDestroyed()) {
+      view.webContents.send('terminal-data', '\r\n\x1b[90mClaude Code has been shut down.\x1b[0m\r\n');
+      view.webContents.send('terminal-exit', { exitCode: 0, signal: null });
+    }
+
+    // Notify sidebar that terminal stopped
+    this._sendTerminalRunningState(tabId, false);
+    // Clear streaming state
+    this._sendStreamingState(tabId, false, null);
   }
 
   /**

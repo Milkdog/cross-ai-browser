@@ -18,6 +18,7 @@ const PromptLibraryManager = require('./core/PromptLibraryManager');
 const PromptImageManager = require('./core/PromptImageManager');
 const TerminalThemes = require('./core/TerminalThemes');
 const HooksManager = require('./core/HooksManager');
+const McpPromptServer = require('./core/McpPromptServer');
 const FirebaseSyncAdapter = require('./core/FirebaseSyncAdapter');
 
 // Firebase configuration (hardcoded for prompt-library-pwa project)
@@ -88,6 +89,7 @@ let hooksManager = null;
 let promptLibraryManager = null;
 let promptImageManager = null;
 let firebaseSyncAdapter = null;
+let mcpPromptServer = null;
 let settingsView = null;
 let settingsActive = false;
 let servicePickerWindow = null;
@@ -124,84 +126,13 @@ function clearTabCompletion(tabId) {
   }
 }
 
-// Handle terminal hook completion events (for notifications and badges)
-function handleTerminalHookCompletion(event) {
-  const { cwd, message, type } = event;
-
-  // Find tab by cwd
-  const tabs = tabManager ? tabManager.getOrderedTabs() : [];
-  let tabId = null;
-  for (const tab of tabs) {
-    const tabData = store.get('tabData', {});
-    const data = tabData[tab.id];
-    if (data && data.cwd) {
-      const normalizedCwd = (cwd || '').replace(/\/+$/, '');
-      const normalizedTabCwd = data.cwd.replace(/\/+$/, '');
-      if (normalizedCwd === normalizedTabCwd) {
-        tabId = tab.id;
-        break;
-      }
-    }
-  }
-
-  if (!tabId) {
-    // Debug: show what cwds we have vs what we're looking for
-    const allTabData = store.get('tabData', {});
-    const storedCwds = Object.entries(allTabData).map(([id, data]) => ({ id, cwd: data?.cwd }));
-    console.log('[Main] handleTerminalHookCompletion: Could not find tab for cwd', cwd);
-    console.log('[Main] Available tab cwds:', storedCwds);
-    return;
-  }
-
-  const tab = tabManager.getTab(tabId);
-  if (!tab) return;
-
-  // Mark tab as completed for badge (if not active)
-  markTabCompleted(tabId);
-
-  const settings = store.get('notifications');
-  if (!settings.enabled) return;
-
-  // Check notification mode
-  const shouldNotify = (() => {
-    switch (settings.mode) {
-      case 'always':
-        return true;
-      case 'unfocused':
-        return !mainWindow.isFocused();
-      case 'inactive-tab':
-        return viewManager.getActiveTabId() !== tabId;
-      default:
-        return true;
-    }
-  })();
-
-  if (!shouldNotify) return;
-
-  // Determine notification content based on hook type
-  const isNotificationHook = type === 'Notification';
-  const title = isNotificationHook ? `${tab.name} needs attention` : `${tab.name} finished`;
-  const body = sanitizeNotificationText(message) || (isNotificationHook ? 'Claude needs your input' : 'Task completed');
-
-  const notification = new Notification({
-    title: title,
-    body: body,
-    silent: false
-  });
-
-  notification.on('click', () => {
-    switchToTab(tabId);
-    mainWindow.show();
-    mainWindow.focus();
-  });
-
-  notification.show();
-}
+// Note: Terminal hook completion is now handled entirely through ViewManager's
+// onTerminalComplete callback, which handles Stop, Notification, and TaskCompleted events
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1400,
-    height: 900,
+    width: 2048,
+    height: 1152,
     minWidth: 800,
     minHeight: 600,
     webPreferences: {
@@ -240,13 +171,8 @@ function createWindow() {
     }
   });
 
-  // Handle Notification hook events immediately (permission requests, etc.)
-  // Note: Stop events are handled by ViewManager after message extraction
-  hooksManager.on('hook-triggered', (event) => {
-    if (event.type === 'Notification') {
-      handleTerminalHookCompletion(event);
-    }
-  });
+  // Note: All hook events (Stop, Notification, TaskCompleted) are handled by
+  // ViewManager which calls onTerminalComplete with (tabId, message, event)
 
   // Initialize PromptLibraryManager
   promptLibraryManager = new PromptLibraryManager({
@@ -256,6 +182,20 @@ function createWindow() {
 
   // Initialize PromptImageManager
   promptImageManager = new PromptImageManager(app.getPath('userData'));
+
+  // Initialize MCP Prompt Server for Claude Code integration
+  mcpPromptServer = new McpPromptServer({
+    promptLibraryManager,
+    promptImageManager,
+    store
+  });
+  mcpPromptServer.start().then(result => {
+    if (result.success) {
+      console.log(`[Main] McpPromptServer started on port ${result.port}`);
+    } else {
+      console.error('[Main] Failed to start McpPromptServer:', result.error);
+    }
+  });
 
   // Initialize FirebaseSyncAdapter for cloud sync
   firebaseSyncAdapter = new FirebaseSyncAdapter({
@@ -400,7 +340,7 @@ function createWindow() {
       mainWindow.webContents.send('tabs-updated', getTabsForRenderer());
       updateShortcuts();
     },
-    onTerminalComplete: (tabId, message) => {
+    onTerminalComplete: (tabId, message, event) => {
       // Handle terminal task completion notification
       const tab = tabManager.getTab(tabId);
       if (!tab) return;
@@ -427,8 +367,30 @@ function createWindow() {
 
       if (!shouldNotify) return;
 
-      const title = `${tab.name} finished`;
-      const body = sanitizeNotificationText(message) || 'Task completed';
+      // Determine notification title/body based on hook event type
+      let title, body;
+      if (event && event.type === 'Notification') {
+        // Notification hook - differentiate by notificationType
+        switch (event.notificationType) {
+          case 'permission_prompt':
+            title = `${tab.name} needs permission`;
+            break;
+          case 'idle_prompt':
+            title = `${tab.name} is waiting`;
+            break;
+          case 'elicitation_dialog':
+            title = `${tab.name} has a question`;
+            break;
+          default:
+            title = event.title ? `${tab.name}: ${event.title}` : `${tab.name} needs attention`;
+            break;
+        }
+        body = sanitizeNotificationText(message) || 'Claude needs your input';
+      } else {
+        // Stop or TaskCompleted - task finished
+        title = `${tab.name} finished`;
+        body = sanitizeNotificationText(message) || 'Task completed';
+      }
 
       const notification = new Notification({
         title: title,
@@ -489,6 +451,11 @@ function createWindow() {
   // Auto-focus the active view when window gains focus
   mainWindow.on('focus', () => {
     viewManager.focusActiveView();
+    // Clear completion badge for the active tab (it was set while window was unfocused)
+    const activeTabId = viewManager.getActiveTabId();
+    if (activeTabId) {
+      clearTabCompletion(activeTabId);
+    }
   });
 
   mainWindow.on('closed', () => {
@@ -504,6 +471,10 @@ function createWindow() {
     if (hooksManager) {
       hooksManager.destroy();
       hooksManager = null;
+    }
+    if (mcpPromptServer) {
+      mcpPromptServer.stop();
+      mcpPromptServer = null;
     }
     mainWindow = null;
   });

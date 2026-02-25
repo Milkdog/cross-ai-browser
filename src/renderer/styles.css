@@ -143,6 +143,18 @@ body {
   white-space: nowrap;
 }
 
+/* Streaming task subtitle */
+.tab-streaming-subtitle {
+  font-size: var(--font-size-xs, 10px);
+  color: var(--color-primary-base, #6366f1);
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.2;
+  opacity: 0.85;
+}
+
 /* Terminal stopped state - PTY not running */
 .service-btn.terminal-stopped {
   opacity: 0.5;
@@ -232,6 +244,10 @@ body {
 .service-btn.is-streaming {
   background: var(--color-primary-muted);
   border-color: var(--color-primary-border);
+  height: auto;
+  min-height: 40px;
+  padding-top: var(--spacing-1, 4px);
+  padding-bottom: var(--spacing-1, 4px);
 }
 
 .service-btn.is-streaming:hover {

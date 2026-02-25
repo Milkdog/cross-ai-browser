@@ -79,8 +79,14 @@ window.triggerPaste = async () => {
 // Apply theme to terminal and update page background
 function applyTheme(theme) {
   terminal.options.theme = theme;
-  // Also update the page background to match
+  // Update page background and inactive border color to match terminal
   document.body.style.background = theme.background;
+  const tc = document.getElementById('terminal-container');
+  if (tc && !tc.classList.contains('ready-for-input')) {
+    tc.style.borderColor = theme.background;
+  }
+  // Store for ready indicator dismiss
+  tc?.dataset && (tc.dataset.themeBg = theme.background);
 }
 
 // Load saved theme from settings
@@ -121,8 +127,14 @@ terminal.open(container);
 let hasSignaledReady = false;
 
 function fitTerminal() {
-  fitAddon.fit();
-  const { cols, rows } = terminal;
+  // Use proposeDimensions to get the calculated size, then subtract
+  // a safety margin to prevent text clipping at edges
+  const dims = fitAddon.proposeDimensions();
+  if (!dims) return;
+
+  const cols = Math.max(2, dims.cols - 1);
+  const rows = dims.rows;
+  terminal.resize(cols, rows);
 
   // Only proceed if we have valid dimensions (not too small)
   if (cols > 10 && rows > 5) {
@@ -130,7 +142,6 @@ function fitTerminal() {
     if (!hasSignaledReady) {
       hasSignaledReady = true;
       window.electronAPI.ready();
-      console.log('Terminal ready, size:', cols, 'x', rows);
     }
     // Always send resize
     window.electronAPI.sendResize(cols, rows);
@@ -293,7 +304,6 @@ terminal.focus();
 
 // Handle process exit - show reload/close options
 window.electronAPI.onExit(({ exitCode, signal }) => {
-  console.log('Claude process exited:', exitCode, signal);
 
   // Create exit overlay using safe DOM methods
   const overlay = document.createElement('div');
@@ -447,13 +457,12 @@ window.electronAPI.onExit(({ exitCode, signal }) => {
 
 // Usage bar update functionality
 function updateUsageBar(type, data) {
-  console.log('=== RENDERER: updateUsageBar called:', type, data);
   if (!data) return;
 
   const fillEl = document.getElementById(`${type}-fill`);
   const textEl = document.getElementById(`${type}-text`);
+  const markerEl = document.getElementById(`${type}-time-marker`);
 
-  console.log('=== RENDERER: DOM elements:', { fillEl: !!fillEl, textEl: !!textEl });
   if (!fillEl || !textEl) return;
 
   // Update progress bar width
@@ -468,6 +477,14 @@ function updateUsageBar(type, data) {
     fillEl.classList.add('warning');
   }
 
+  // Update time-elapsed marker
+  if (markerEl && data.timeElapsedPercent != null) {
+    markerEl.style.left = `${data.timeElapsedPercent}%`;
+    markerEl.classList.add('visible');
+  } else if (markerEl) {
+    markerEl.classList.remove('visible');
+  }
+
   // Update text display
   const percentText = percentage > 0 ? `${Math.round(percentage)}%` : '--';
   const timeText = data.timeLeft || '--';
@@ -476,7 +493,6 @@ function updateUsageBar(type, data) {
 
 // Listen for usage updates from main process
 window.electronAPI.onUsageUpdate((data) => {
-  console.log('=== RENDERER: Received usage update:', data);
   const { session, weekly } = data;
   updateUsageBar('session', session);
   updateUsageBar('weekly', weekly);
@@ -525,6 +541,14 @@ let readyIndicatorTimeout = null;
 function updateReadyIndicator() {
   const shouldShowReady = !isStreaming && !userInteracted;
   container.classList.toggle('ready-for-input', shouldShowReady);
+  if (shouldShowReady) {
+    // Clear inline style so CSS animation controls border-color
+    container.style.borderColor = '';
+  } else {
+    // Restore border to theme background so it blends in
+    const themeBg = container.dataset.themeBg;
+    if (themeBg) container.style.borderColor = themeBg;
+  }
 }
 
 function markUserInteraction() {

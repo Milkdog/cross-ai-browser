@@ -5,7 +5,7 @@
  * - Start/stop local HTTP server for hook callbacks
  * - Install hooks into ~/.claude/settings.json
  * - Validate and route incoming hook requests
- * - Emit events for hook triggers (UserPromptSubmit, Stop, Notification)
+ * - Emit events for hook triggers (UserPromptSubmit, Stop, Notification, SubagentStart, SubagentStop, TaskCompleted, PreToolUse)
  */
 
 const http = require('http');
@@ -15,10 +15,13 @@ const os = require('os');
 const { EventEmitter } = require('events');
 
 // Hook types we support
-const SUPPORTED_HOOKS = ['UserPromptSubmit', 'Stop', 'Notification'];
+const SUPPORTED_HOOKS = [
+  'UserPromptSubmit', 'Stop', 'Notification',
+  'SubagentStart', 'SubagentStop', 'TaskCompleted', 'PreToolUse'
+];
 
-// Max request body size (10KB)
-const MAX_BODY_SIZE = 10 * 1024;
+// Max request body size (64KB - last_assistant_message can be large)
+const MAX_BODY_SIZE = 64 * 1024;
 
 class HooksManager extends EventEmitter {
   /**
@@ -176,9 +179,19 @@ class HooksManager extends EventEmitter {
       eventData.prompt = data.prompt;
     } else if (hookType === 'Notification') {
       eventData.message = data.message;
+      eventData.title = data.title;
       eventData.notificationType = data.notification_type;
     } else if (hookType === 'Stop') {
       eventData.stopHookActive = data.stop_hook_active;
+      eventData.lastAssistantMessage = data.last_assistant_message;
+    } else if (hookType === 'SubagentStart' || hookType === 'SubagentStop') {
+      eventData.agentType = data.agent_type;
+    } else if (hookType === 'TaskCompleted') {
+      eventData.taskSubject = data.task_subject;
+      eventData.taskDescription = data.task_description;
+    } else if (hookType === 'PreToolUse') {
+      eventData.toolName = data.tool_name;
+      eventData.toolInput = data.tool_input;
     }
 
     // Emit event for listeners

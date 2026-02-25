@@ -191,7 +191,7 @@ class StreamingDetector {
     this.serviceId = null;
     this.debounceTimer = null;
     this.lastStreamingState = false;
-    this.debug = true; // Enable debug logging
+    this.debug = false;
   }
 
   log(...args) {
@@ -500,4 +500,4 @@ class StreamingDetector {
 const detector = new StreamingDetector();
 detector.init();
 
-console.log('[CrossAI] Webview preload initialized for:', window.location.hostname);
+// Webview preload initialized

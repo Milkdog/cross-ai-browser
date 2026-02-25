@@ -211,9 +211,13 @@ function renderTabs(tabs) {
       btn.appendChild(indicator);
       btn.classList.add('is-streaming');
 
-      // Add task description as tooltip if available
+      // Show task description as subtitle below tab name
       if (streamingState.taskDescription) {
-        btn.title = `Working: ${streamingState.taskDescription}`;
+        const subtitle = document.createElement('div');
+        subtitle.className = 'tab-streaming-subtitle';
+        subtitle.textContent = streamingState.taskDescription;
+        textContainer.appendChild(subtitle);
+        btn.title = streamingState.taskDescription;
       }
     }
 

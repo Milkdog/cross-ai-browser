@@ -396,11 +396,13 @@ class FirebaseSyncAdapter extends EventEmitter {
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      console.log('[FirebaseSyncAdapter] onSnapshot fired, changes:', snapshot.docChanges().length);
-      snapshot.docChanges().forEach((change) => {
+      const changes = snapshot.docChanges();
+      if (changes.length > 0) {
+        console.log(`[FirebaseSyncAdapter] Syncing ${changes.length} prompt(s)`);
+      }
+      changes.forEach((change) => {
         const data = change.doc.data();
         const promptId = change.doc.id;
-        console.log(`[FirebaseSyncAdapter] Change type: ${change.type}, promptId: ${promptId}, title: ${data.title || '(no title)'}`);
 
         if (change.type === 'added' || change.type === 'modified') {
           this.emit('remote-prompt-changed', {
@@ -625,7 +627,7 @@ class FirebaseSyncAdapter extends EventEmitter {
         updatedAt: serverTimestamp()
       }, { merge: true });
 
-      console.log(`[FirebaseSyncAdapter] Updated project info for ${folderName}`);
+      // Logged at debug level — this runs frequently during sync
       return { success: true };
     } catch (err) {
       console.error('[FirebaseSyncAdapter] Failed to update project info:', err);

@@ -66,7 +66,7 @@ class ViewManager {
    * @param {Object} options.store - electron-store instance
    * @param {Function} options.getSidebarWidth - Function to get current sidebar width
    * @param {Function} options.onTabsChanged - Callback when tabs change
-   * @param {Function} options.onTerminalComplete - Callback when terminal task completes (tabId, message)
+   * @param {Function} options.onTerminalComplete - Callback when terminal task completes (tabId, message, event)
    * @param {HistoryManager} options.historyManager - Optional history manager for session recording
    * @param {HooksManager} options.hooksManager - Optional hooks manager for Claude Code hooks
    * @param {FirebaseSyncAdapter} options.firebaseSyncAdapter - Optional Firebase sync adapter
@@ -93,6 +93,12 @@ class ViewManager {
 
     // History session tracking: tabId -> sessionId
     this.terminalSessions = new Map();
+
+    // Streaming safety timeout: tabId -> setTimeout ID
+    this.streamingTimeouts = new Map();
+    // Subagent depth tracking: tabId -> count of active subagents
+    this.subagentDepth = new Map();
+    this.STREAMING_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
     // Usage tracking for Claude Code tabs
     this.usageCache = {
@@ -130,7 +136,7 @@ class ViewManager {
    * @private
    */
   _handleHookEvent(event) {
-    const { type, cwd, prompt, message } = event;
+    const { type, cwd } = event;
 
     // Find the tab ID for this cwd
     const tabId = this._getTabIdForCwd(cwd);
@@ -141,33 +147,76 @@ class ViewManager {
 
     switch (type) {
       case 'UserPromptSubmit':
-        // Claude started working
-        this._sendStreamingState(tabId, true, this._extractTaskDescription(prompt));
+        // Claude started working - start streaming with safety timeout
+        this.subagentDepth.set(tabId, 0);
+        this._setStreamingWithTimeout(tabId, true, this._extractTaskDescription(event.prompt));
         break;
 
-      case 'Stop':
-        // Claude finished working
-        this._sendStreamingState(tabId, false, null);
-        // Delay slightly to allow final PTY output to arrive before extracting message
-        setTimeout(() => {
-          const completionMessage = this._extractCompletionMessage(tabId);
-          this._sendCompletionEvent(tabId, completionMessage);
-          // Notify main.js for system notification
-          if (this.onTerminalComplete) {
-            this.onTerminalComplete(tabId, completionMessage);
-          }
-          // Clear the recent output buffer after extracting the message
-          const promptState = this.terminalPromptState.get(tabId);
-          if (promptState) {
-            promptState.recentOutput = '';
-          }
-        }, 300);
+      case 'Stop': {
+        if (event.stopHookActive) {
+          // Conversation continuing (e.g., tool use approval) - keep streaming, reset timeout
+          this._resetStreamingTimeout(tabId);
+          break;
+        }
+        const depth = this.subagentDepth.get(tabId) || 0;
+        if (depth > 0) {
+          // Subagents still active - keep streaming, reset timeout
+          this._resetStreamingTimeout(tabId);
+          break;
+        }
+        // Fully stopped - clear streaming and notify
+        this._setStreamingWithTimeout(tabId, false, null);
+        const completionMessage = this._extractMessageFromHook(event.lastAssistantMessage);
+        this._sendCompletionEvent(tabId, completionMessage);
+        if (this.onTerminalComplete) {
+          this.onTerminalComplete(tabId, completionMessage, event);
+        }
+        break;
+      }
+
+      case 'SubagentStart':
+        this.subagentDepth.set(tabId, (this.subagentDepth.get(tabId) || 0) + 1);
+        this._resetStreamingTimeout(tabId);
         break;
 
-      case 'Notification':
-        // Claude sent a notification (e.g., permission request)
-        this._sendCompletionEvent(tabId, message || 'Claude needs attention');
+      case 'SubagentStop':
+        this.subagentDepth.set(tabId, Math.max(0, (this.subagentDepth.get(tabId) || 0) - 1));
+        this._resetStreamingTimeout(tabId);
         break;
+
+      case 'TaskCompleted': {
+        // Task finished - always stop streaming
+        this._setStreamingWithTimeout(tabId, false, null);
+        const taskMessage = event.taskSubject || 'Task completed';
+        this._sendCompletionEvent(tabId, taskMessage);
+        if (this.onTerminalComplete) {
+          this.onTerminalComplete(tabId, taskMessage, event);
+        }
+        break;
+      }
+
+      case 'Notification': {
+        // Skip idle_prompt — it's redundant with the Stop hook's "finished" notification
+        if (event.notificationType === 'idle_prompt') break;
+
+        // Actionable notifications: permission_prompt, elicitation_dialog, etc.
+        const notifMessage = event.message || 'Claude needs attention';
+        this._sendCompletionEvent(tabId, notifMessage);
+        if (this.onTerminalComplete) {
+          this.onTerminalComplete(tabId, notifMessage, event);
+        }
+        break;
+      }
+
+      case 'PreToolUse': {
+        // Update streaming task description with current tool activity
+        const toolDesc = this._formatToolActivity(event.toolName, event.toolInput);
+        if (toolDesc) {
+          this._sendStreamingState(tabId, true, toolDesc);
+          this._resetStreamingTimeout(tabId);
+        }
+        break;
+      }
     }
   }
 
@@ -215,62 +264,126 @@ class ViewManager {
   }
 
   /**
-   * Extract completion message from recent terminal output
-   * Looks for text after the last ● (black circle) bullet character
+   * Extract notification body from the Stop hook's last_assistant_message
+   * Takes the first line, cleans whitespace, truncates to 150 chars
    * @private
    */
-  _extractCompletionMessage(tabId) {
-    const promptState = this.terminalPromptState.get(tabId);
-    if (!promptState || !promptState.recentOutput) {
-      console.log('[ViewManager] No recent output for tab', tabId);
-      return 'Task completed';
+  _extractMessageFromHook(lastAssistantMessage) {
+    if (!lastAssistantMessage) return 'Task completed';
+
+    // Take the first non-empty line
+    const lines = lastAssistantMessage.split('\n');
+    let message = '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed) {
+        message = trimmed;
+        break;
+      }
     }
 
-    const rawOutput = promptState.recentOutput;
+    if (!message) return 'Task completed';
 
-    // Search for white-colored ⏺ in raw output: \x1b[38;2;255;255;255m⏺
-    // This is the specific pattern Claude Code uses for completion messages
-    const whiteDotPattern = '\x1b[38;2;255;255;255m⏺';
-    let lastDotIndex = rawOutput.lastIndexOf(whiteDotPattern);
-    console.log('[ViewManager] White dot index:', lastDotIndex);
-
-    if (lastDotIndex === -1) {
-      // Fallback: search in cleaned output
-      const cleanOutput = rawOutput.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
-      lastDotIndex = cleanOutput.lastIndexOf('⏺');
-      if (lastDotIndex === -1) {
-        return 'Task completed';
-      }
-      let message = cleanOutput.slice(lastDotIndex + 1).trim();
-      const newlineIndex = message.indexOf('\n');
-      if (newlineIndex !== -1) {
-        message = message.slice(0, newlineIndex).trim();
-      }
-      message = message.replace(/\s+/g, ' ').trim();
-      if (message.length > 100) {
-        message = message.slice(0, 100) + '...';
-      }
-      return message || 'Task completed';
-    }
-
-    // Extract text after the white dot pattern, strip ANSI codes from the result
-    let message = rawOutput.slice(lastDotIndex + whiteDotPattern.length);
-    // Strip ANSI codes and take first line
-    message = message.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').trim();
-
-    // Take just the first line
-    const newlineIndex = message.indexOf('\n');
-    if (newlineIndex !== -1) {
-      message = message.slice(0, newlineIndex).trim();
-    }
-
-    // Clean up and limit length
+    // Clean whitespace and truncate
     message = message.replace(/\s+/g, ' ').trim();
-    if (message.length > 100) {
-      message = message.slice(0, 100) + '...';
+    if (message.length > 150) {
+      message = message.slice(0, 150) + '...';
     }
 
-    return message || 'Task completed';
+    return message;
+  }
+
+  /**
+   * Format tool activity into a human-readable description
+   * @private
+   */
+  _formatToolActivity(toolName, toolInput) {
+    if (!toolName) return null;
+
+    switch (toolName) {
+      case 'Bash':
+        if (toolInput && toolInput.command) {
+          const cmd = toolInput.command.length > 60
+            ? toolInput.command.slice(0, 60) + '...'
+            : toolInput.command;
+          return `Running: ${cmd}`;
+        }
+        return 'Running command';
+      case 'Edit':
+      case 'Write':
+        if (toolInput && toolInput.file_path) {
+          const fileName = toolInput.file_path.split('/').pop();
+          return `Editing: ${fileName}`;
+        }
+        return 'Editing file';
+      case 'Read':
+        if (toolInput && toolInput.file_path) {
+          const fileName = toolInput.file_path.split('/').pop();
+          return `Reading: ${fileName}`;
+        }
+        return 'Reading file';
+      case 'Grep':
+        if (toolInput && toolInput.pattern) {
+          return `Searching: ${toolInput.pattern}`;
+        }
+        return 'Searching code';
+      case 'Glob':
+        if (toolInput && toolInput.pattern) {
+          return `Finding: ${toolInput.pattern}`;
+        }
+        return 'Finding files';
+      case 'Task':
+        return 'Running agent';
+      case 'WebSearch':
+        return 'Searching web';
+      case 'WebFetch':
+        return 'Fetching URL';
+      default:
+        return `Using ${toolName}`;
+    }
+  }
+
+  /**
+   * Set streaming state with a safety timeout to prevent stuck indicators
+   * @private
+   */
+  _setStreamingWithTimeout(tabId, isStreaming, taskDescription) {
+    this._sendStreamingState(tabId, isStreaming, taskDescription);
+
+    if (isStreaming) {
+      this._resetStreamingTimeout(tabId);
+    } else {
+      this._clearStreamingTimeout(tabId);
+    }
+  }
+
+  /**
+   * Reset the safety timeout for streaming (called on activity)
+   * @private
+   */
+  _resetStreamingTimeout(tabId) {
+    this._clearStreamingTimeout(tabId);
+
+    const timeoutId = setTimeout(() => {
+      console.warn(`[ViewManager] Streaming timeout reached for tab ${tabId}, forcing off`);
+      this._sendStreamingState(tabId, false, null);
+      this.streamingTimeouts.delete(tabId);
+      this.subagentDepth.delete(tabId);
+    }, this.STREAMING_TIMEOUT_MS);
+
+    this.streamingTimeouts.set(tabId, timeoutId);
+  }
+
+  /**
+   * Clear the safety timeout for streaming
+   * @private
+   */
+  _clearStreamingTimeout(tabId) {
+    const existing = this.streamingTimeouts.get(tabId);
+    if (existing) {
+      clearTimeout(existing);
+      this.streamingTimeouts.delete(tabId);
+    }
   }
 
   /**
@@ -473,7 +586,6 @@ class ViewManager {
     this.terminalReadyState.set(tab.id, false);
     this.terminalOutputBuffer.set(tab.id, []);
     this.terminalPromptState.set(tab.id, {
-      recentOutput: '',
       lastActivity: Date.now(),
       cols: 80,
       rows: 30
@@ -625,16 +737,10 @@ class ViewManager {
       this.terminalOutputBuffer.set(tabId, buffer);
     }
 
-    // Track output for usage updates and completion message extraction
+    // Track output for usage updates
     const promptState = this.terminalPromptState.get(tabId);
     if (promptState) {
       promptState.lastActivity = Date.now();
-      // Keep a sliding window of recent output for extracting completion messages
-      promptState.recentOutput = (promptState.recentOutput || '') + data;
-      // Limit to last 4KB to avoid memory issues
-      if (promptState.recentOutput.length > 4096) {
-        promptState.recentOutput = promptState.recentOutput.slice(-4096);
-      }
       this._triggerUsageUpdate(tabId);
     }
   }
@@ -669,6 +775,11 @@ class ViewManager {
     }
 
     this.terminalPtys.delete(tabId);
+
+    // Clear streaming/subagent state (fallback when PTY dies without Stop hook)
+    this._clearStreamingTimeout(tabId);
+    this.subagentDepth.delete(tabId);
+    this._sendStreamingState(tabId, false, null);
 
     // Notify sidebar that terminal stopped
     this._sendTerminalRunningState(tabId, false);
@@ -992,6 +1103,11 @@ class ViewManager {
       this.terminalPtys.delete(tabId);
     }
 
+    // Clear streaming/subagent state before restart
+    this._clearStreamingTimeout(tabId);
+    this.subagentDepth.delete(tabId);
+    this._sendStreamingState(tabId, false, null);
+
     // Clear and restart
     view.webContents.send('terminal-data', '\x1b[2J\x1b[H');
     view.webContents.send('terminal-data', '\x1b[90mRestarting Claude Code...\x1b[0m\r\n\r\n');
@@ -1023,11 +1139,9 @@ class ViewManager {
       this.terminalSessions.delete(tabId);
     }
 
-    // Clear prompt state tracking
-    const promptState = this.terminalPromptState.get(tabId);
-    if (promptState) {
-      promptState.recentOutput = '';
-    }
+    // Clear streaming/subagent state
+    this._clearStreamingTimeout(tabId);
+    this.subagentDepth.delete(tabId);
 
     // Send shutdown message to terminal view
     const view = this.terminalViews.get(tabId);
@@ -1056,6 +1170,11 @@ class ViewManager {
       existingPty.kill();
       this.terminalPtys.delete(tabId);
     }
+
+    // Clear streaming/subagent state before resume
+    this._clearStreamingTimeout(tabId);
+    this.subagentDepth.delete(tabId);
+    this._sendStreamingState(tabId, false, null);
 
     view.webContents.send('terminal-data', '\x1b[2J\x1b[H');
     view.webContents.send('terminal-data', '\x1b[90mResuming Claude Code session...\x1b[0m\r\n\r\n');
@@ -1246,6 +1365,8 @@ class ViewManager {
     this.terminalReadyState.delete(tabId);
     this.terminalOutputBuffer.delete(tabId);
     this.terminalPromptState.delete(tabId);
+    this._clearStreamingTimeout(tabId);
+    this.subagentDepth.delete(tabId);
 
     if (this.usageUpdateTimers.has(tabId)) {
       clearTimeout(this.usageUpdateTimers.get(tabId));
@@ -1383,6 +1504,9 @@ class ViewManager {
     for (const timer of this.usageUpdateTimers.values()) {
       clearTimeout(timer);
     }
+    for (const timer of this.streamingTimeouts.values()) {
+      clearTimeout(timer);
+    }
 
     this.webViews.clear();
     this.terminalViews.clear();
@@ -1391,6 +1515,8 @@ class ViewManager {
     this.terminalOutputBuffer.clear();
     this.terminalPromptState.clear();
     this.usageUpdateTimers.clear();
+    this.streamingTimeouts.clear();
+    this.subagentDepth.clear();
   }
 
   /**

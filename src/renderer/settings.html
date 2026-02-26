@@ -320,6 +320,43 @@
       color: var(--color-status-error, #ef4444);
     }
 
+    /* Sound picker */
+    .sound-picker {
+      display: flex;
+      gap: var(--spacing-2, 8px);
+      align-items: center;
+    }
+
+    .sound-picker .settings-select {
+      flex: 1;
+    }
+
+    .preview-sound-btn {
+      width: 40px;
+      height: 40px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--color-bg-card, #2a2a32);
+      border: 1px solid var(--color-border-default, #3c3c42);
+      border-radius: var(--radius-md, 6px);
+      color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
+      cursor: pointer;
+      transition: all var(--transition-fast, 0.15s ease);
+    }
+
+    .preview-sound-btn:hover {
+      background: var(--color-bg-cardHover, #32323c);
+      border-color: var(--color-border-hover, #4a4a52);
+      color: var(--color-text-primary, rgba(255, 255, 255, 0.9));
+    }
+
+    .preview-sound-btn svg {
+      width: 16px;
+      height: 16px;
+    }
+
     /* Theme preview */
     .theme-preview {
       background: var(--color-bg-base, #1a1a20);
@@ -451,6 +488,22 @@
               <option value="inactive-tab">Tab is inactive</option>
             </select>
           </div>
+
+          <div class="settings-group">
+            <label class="settings-label">Notification sound</label>
+            <div class="sound-picker">
+              <select id="notification-sound" class="settings-select">
+                <option value="none">None (silent)</option>
+              </select>
+              <button id="preview-sound-btn" class="preview-sound-btn" title="Preview sound">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                </svg>
+              </button>
+            </div>
+          </div>
         </div>
 
         <!-- Terminal -->
@@ -561,6 +614,8 @@
   <script>
     const notificationsEnabled = document.getElementById('notifications-enabled');
     const notificationMode = document.getElementById('notification-mode');
+    const notificationSound = document.getElementById('notification-sound');
+    const previewSoundBtn = document.getElementById('preview-sound-btn');
     const downloadSaveMode = document.getElementById('download-save-mode');
     const clearHistoryBtn = document.getElementById('clear-history-btn');
     const doneBtn = document.getElementById('done-btn');
@@ -581,6 +636,9 @@
 
         const saveMode = await window.electronAPI.getDownloadSaveMode();
         downloadSaveMode.value = saveMode;
+
+        // Load notification sounds
+        await loadNotificationSounds(settings);
 
         // Load terminal themes
         await loadTerminalThemes();
@@ -628,6 +686,54 @@
       themePreview.querySelector('.preview-yellow').style.color = theme.yellow;
     }
 
+    async function loadNotificationSounds(settings) {
+      try {
+        const { custom, system } = await window.electronAPI.getNotificationSounds();
+        const currentSound = (settings && settings.notifications && settings.notifications.sound) || 'crossai-pulse';
+
+        // Clear existing options
+        while (notificationSound.firstChild) {
+          notificationSound.removeChild(notificationSound.firstChild);
+        }
+
+        // "None" option
+        const noneOption = document.createElement('option');
+        noneOption.value = 'none';
+        noneOption.textContent = 'None (silent)';
+        notificationSound.appendChild(noneOption);
+
+        // Custom sounds group
+        if (custom.length > 0) {
+          const customGroup = document.createElement('optgroup');
+          customGroup.label = 'Custom';
+          custom.forEach(s => {
+            const opt = document.createElement('option');
+            opt.value = s.id;
+            opt.textContent = s.name;
+            customGroup.appendChild(opt);
+          });
+          notificationSound.appendChild(customGroup);
+        }
+
+        // System sounds group
+        if (system.length > 0) {
+          const systemGroup = document.createElement('optgroup');
+          systemGroup.label = 'System';
+          system.forEach(s => {
+            const opt = document.createElement('option');
+            opt.value = s.id;
+            opt.textContent = s.name;
+            systemGroup.appendChild(opt);
+          });
+          notificationSound.appendChild(systemGroup);
+        }
+
+        notificationSound.value = currentSound;
+      } catch (e) {
+        console.error('Failed to load notification sounds:', e);
+      }
+    }
+
     loadSettings();
 
     // Save settings on change
@@ -637,6 +743,17 @@
 
     notificationMode.onchange = () => {
       window.electronAPI.setSetting('notifications.mode', notificationMode.value);
+    };
+
+    notificationSound.onchange = () => {
+      window.electronAPI.setSetting('notifications.sound', notificationSound.value);
+    };
+
+    previewSoundBtn.onclick = () => {
+      const selected = notificationSound.value;
+      if (selected !== 'none') {
+        window.electronAPI.previewSound(selected);
+      }
     };
 
     downloadSaveMode.onchange = async () => {

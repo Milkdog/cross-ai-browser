@@ -8,6 +8,7 @@
  *   name: string,        // Display name (can be customized)
  *   order: number,       // Position in sidebar (0-based)
  *   createdAt: number,   // Timestamp
+ *   archived: boolean,   // Whether tab is archived (hidden from active list)
  * }
  */
 
@@ -41,7 +42,8 @@ class TabManager {
           serviceType: tab.serviceType,
           name: tab.name || tab.serviceType,
           order: typeof tab.order === 'number' ? tab.order : this.tabs.size,
-          createdAt: tab.createdAt || Date.now()
+          createdAt: tab.createdAt || Date.now(),
+          archived: tab.archived || false
         });
       }
     });
@@ -55,8 +57,9 @@ class TabManager {
    * @private
    */
   _saveToStore() {
-    const tabArray = this.getOrderedTabs();
-    this.store.set('tabs', tabArray);
+    // Save ALL tabs (active + archived) to the store
+    const allTabs = Array.from(this.tabs.values());
+    this.store.set('tabs', allTabs);
   }
 
   /**
@@ -86,11 +89,13 @@ class TabManager {
   }
 
   /**
-   * Get all tabs ordered by position
+   * Get all active (non-archived) tabs ordered by position
    * @returns {Object[]} Array of tabs sorted by order
    */
   getOrderedTabs() {
-    return Array.from(this.tabs.values()).sort((a, b) => a.order - b.order);
+    return Array.from(this.tabs.values())
+      .filter(t => !t.archived)
+      .sort((a, b) => a.order - b.order);
   }
 
   /**
@@ -103,19 +108,19 @@ class TabManager {
   }
 
   /**
-   * Check if any tabs exist
-   * @returns {boolean} True if there are tabs
+   * Check if any active (non-archived) tabs exist
+   * @returns {boolean} True if there are active tabs
    */
   hasTabs() {
-    return this.tabs.size > 0;
+    return this.getOrderedTabs().length > 0;
   }
 
   /**
-   * Get the count of tabs
-   * @returns {number} Number of tabs
+   * Get the count of active (non-archived) tabs
+   * @returns {number} Number of active tabs
    */
   getTabCount() {
-    return this.tabs.size;
+    return this.getOrderedTabs().length;
   }
 
   /**
@@ -136,8 +141,9 @@ class TabManager {
       id: `tab-${crypto.randomUUID()}`,
       serviceType,
       name,
-      order: this.tabs.size,
-      createdAt: Date.now()
+      order: this.getOrderedTabs().length,
+      createdAt: Date.now(),
+      archived: false
     };
 
     this.tabs.set(tab.id, tab);
@@ -254,6 +260,51 @@ class TabManager {
     this._notifyListeners();
 
     return true;
+  }
+
+  /**
+   * Archive a tab (hide from active list but preserve data)
+   * @param {string} tabId - The tab ID
+   * @returns {Object|null} The archived tab or null
+   */
+  archiveTab(tabId) {
+    const tab = this.tabs.get(tabId);
+    if (!tab || tab.archived) return null;
+
+    tab.archived = true;
+    this._normalizeOrder();
+    this._saveToStore();
+    this._notifyListeners();
+
+    return tab;
+  }
+
+  /**
+   * Unarchive a tab (restore to active list)
+   * @param {string} tabId - The tab ID
+   * @returns {Object|null} The unarchived tab or null
+   */
+  unarchiveTab(tabId) {
+    const tab = this.tabs.get(tabId);
+    if (!tab || !tab.archived) return null;
+
+    tab.archived = false;
+    tab.order = this.getOrderedTabs().length; // Append to end
+    this._normalizeOrder();
+    this._saveToStore();
+    this._notifyListeners();
+
+    return tab;
+  }
+
+  /**
+   * Get all archived tabs ordered by name
+   * @returns {Object[]} Array of archived tabs
+   */
+  getArchivedTabs() {
+    return Array.from(this.tabs.values())
+      .filter(t => t.archived)
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   /**

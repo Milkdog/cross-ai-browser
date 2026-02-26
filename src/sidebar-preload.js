@@ -9,6 +9,7 @@ let completionBadgesListener = null;
 let streamingStateListener = null;
 let terminalRunningStateListener = null;
 let settingsActiveListener = null;
+let archivedTabsListener = null;
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Service/Tab management
@@ -66,6 +67,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getHistoryStats: () => ipcRenderer.invoke('get-history-stats'),
   clearHistory: () => ipcRenderer.invoke('clear-history'),
   isHistoryEnabled: () => ipcRenderer.invoke('is-history-enabled'),
+
+  // Archive management
+  archiveTab: (tabId) => ipcRenderer.invoke('archive-tab', tabId),
+  unarchiveTab: (tabId) => ipcRenderer.invoke('unarchive-tab', tabId),
+  getArchivedTabs: () => ipcRenderer.invoke('get-archived-tabs'),
 
   // Completion badges
   getCompletionBadges: () => ipcRenderer.invoke('get-completion-badges'),
@@ -130,6 +136,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('terminal-running-state-changed', terminalRunningStateListener);
   },
 
+  onArchivedTabsUpdated: (callback) => {
+    if (archivedTabsListener) {
+      ipcRenderer.removeListener('archived-tabs-updated', archivedTabsListener);
+    }
+    archivedTabsListener = (event, tabs) => callback(tabs);
+    ipcRenderer.on('archived-tabs-updated', archivedTabsListener);
+  },
+
   onSettingsActiveChanged: (callback) => {
     if (settingsActiveListener) {
       ipcRenderer.removeListener('settings-active-changed', settingsActiveListener);
@@ -168,6 +182,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeListener('terminal-running-state-changed', terminalRunningStateListener);
       terminalRunningStateListener = null;
     }
+    if (archivedTabsListener) {
+      ipcRenderer.removeListener('archived-tabs-updated', archivedTabsListener);
+      archivedTabsListener = null;
+    }
     if (settingsActiveListener) {
       ipcRenderer.removeListener('settings-active-changed', settingsActiveListener);
       settingsActiveListener = null;
@@ -197,6 +215,9 @@ window.addEventListener('beforeunload', () => {
   }
   if (terminalRunningStateListener) {
     ipcRenderer.removeListener('terminal-running-state-changed', terminalRunningStateListener);
+  }
+  if (archivedTabsListener) {
+    ipcRenderer.removeListener('archived-tabs-updated', archivedTabsListener);
   }
   if (settingsActiveListener) {
     ipcRenderer.removeListener('settings-active-changed', settingsActiveListener);

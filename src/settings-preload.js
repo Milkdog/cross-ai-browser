@@ -15,6 +15,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getTerminalTheme: () => ipcRenderer.invoke('get-terminal-theme'),
   getAllTerminalThemes: () => ipcRenderer.invoke('get-all-terminal-themes'),
 
+  // Notification sounds
+  getNotificationSounds: () => ipcRenderer.invoke('get-notification-sounds'),
+  previewSound: (soundName) => ipcRenderer.invoke('preview-notification-sound', soundName),
+
   // Firebase Cloud Sync
   getFirebaseStatus: () => ipcRenderer.invoke('firebase-get-status'),
   firebaseLogin: (email, password) => ipcRenderer.invoke('firebase-login', email, password),

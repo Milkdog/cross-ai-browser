@@ -61,7 +61,8 @@ const store = new Store({
   defaults: {
     notifications: {
       enabled: true,
-      mode: 'always' // 'always', 'unfocused', 'inactive-tab'
+      mode: 'always', // 'always', 'unfocused', 'inactive-tab'
+      sound: 'crossai-pulse' // custom sound name, system sound name, or 'none'
     },
     tabs: [], // Persisted tabs (new format)
     tabData: {}, // Additional tab data (cwd for terminals)
@@ -392,10 +393,12 @@ function createWindow() {
         body = sanitizeNotificationText(message) || 'Task completed';
       }
 
+      const soundSetting = store.get('notifications.sound', 'crossai-pulse');
       const notification = new Notification({
         title: title,
         body: body,
-        silent: false
+        silent: soundSetting === 'none',
+        sound: soundSetting !== 'none' ? soundSetting : undefined
       });
 
       notification.on('click', () => {
@@ -521,6 +524,21 @@ function createViewForTab(tab) {
       }
     }
   }
+}
+
+/**
+ * Get archived tabs formatted for renderer
+ */
+function getArchivedTabsForRenderer() {
+  return tabManager.getArchivedTabs().map(tab => {
+    const serviceType = getServiceType(tab.serviceType);
+    return {
+      id: tab.id,
+      serviceType: tab.serviceType,
+      name: tab.name,
+      type: serviceType ? serviceType.type : 'web'
+    };
+  });
 }
 
 /**
@@ -797,6 +815,7 @@ function updateShortcuts() {
 // IPC handlers
 ipcMain.on('switch-service', (event, tabId) => {
   switchToTab(tabId);
+  viewManager.focusActiveView();
 });
 
 ipcMain.handle('get-services', () => {
@@ -844,7 +863,7 @@ ipcMain.handle('get-settings', () => {
 
 ipcMain.on('set-setting', (event, key, value) => {
   // Validate setting keys
-  const allowedKeys = ['notifications', 'notifications.enabled', 'notifications.mode', 'terminal.theme'];
+  const allowedKeys = ['notifications', 'notifications.enabled', 'notifications.mode', 'notifications.sound', 'terminal.theme'];
   if (allowedKeys.includes(key)) {
     // Validate terminal theme
     if (key === 'terminal.theme' && !TerminalThemes.isValidTheme(value)) {
@@ -870,6 +889,36 @@ ipcMain.handle('get-terminal-theme', () => {
 
 ipcMain.handle('get-all-terminal-themes', () => {
   return TerminalThemes.getAllThemes();
+});
+
+// Notification sound handlers
+ipcMain.handle('get-notification-sounds', () => {
+  const custom = [
+    { id: 'crossai-chime', name: 'Cross AI Chime', category: 'custom' },
+    { id: 'crossai-bell', name: 'Cross AI Bell', category: 'custom' },
+    { id: 'crossai-pulse', name: 'Cross AI Pulse', category: 'custom' },
+  ];
+  let system = [];
+  const systemSoundsDir = '/System/Library/Sounds';
+  try {
+    system = fs.readdirSync(systemSoundsDir)
+      .filter(f => f.endsWith('.aiff'))
+      .map(f => ({ id: f.replace('.aiff', ''), name: f.replace('.aiff', ''), category: 'system' }));
+  } catch (e) {
+    // System sounds dir may not be accessible
+  }
+  return { custom, system };
+});
+
+ipcMain.handle('preview-notification-sound', (event, soundName) => {
+  if (typeof soundName !== 'string' || !soundName || /[/\\]/.test(soundName)) return;
+  const { execFile } = require('child_process');
+  const userSound = path.join(app.getPath('home'), 'Library', 'Sounds', soundName + '.aiff');
+  const systemSound = '/System/Library/Sounds/' + soundName + '.aiff';
+  const soundPath = fs.existsSync(userSound) ? userSound : systemSound;
+  if (fs.existsSync(soundPath)) {
+    execFile('afplay', [soundPath]);
+  }
 });
 
 // Firebase Cloud Sync handlers
@@ -1091,6 +1140,68 @@ ipcMain.on('reorder-tabs', (event, draggedTabId, targetTabId, position) => {
   reorderTab(draggedTabId, targetTabId, position);
 });
 
+// Archive/unarchive tab handlers
+ipcMain.handle('archive-tab', async (event, tabId) => {
+  const tab = tabManager.getTab(tabId);
+  if (!tab) return false;
+
+  // Remember the active tab and index before archiving
+  const activeTabId = viewManager.getActiveTabId();
+  const tabIndex = tabManager.getTabIndex(tabId);
+
+  // Destroy the view (kills PTY for terminals, removes BrowserView)
+  viewManager.destroyView(tabId);
+
+  // Archive in TabManager (preserves tab metadata + tabData cwd)
+  tabManager.archiveTab(tabId);
+
+  // Only switch tabs if the archived tab was the active one
+  if (activeTabId === tabId) {
+    if (!tabManager.hasTabs()) {
+      showServicePicker(true);
+    } else {
+      // Prefer adjacent tab (same index, or last tab if at end)
+      const nextTab = tabManager.getTabAtIndex(tabIndex) || tabManager.getTabAtIndex(tabIndex - 1) || tabManager.getTabAtIndex(0);
+      if (nextTab) {
+        switchToTab(nextTab.id);
+      }
+    }
+  }
+
+  // Notify sidebar
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('tabs-updated', getTabsForRenderer());
+    mainWindow.webContents.send('archived-tabs-updated', getArchivedTabsForRenderer());
+  }
+  updateShortcuts();
+
+  return true;
+});
+
+ipcMain.handle('unarchive-tab', async (event, tabId) => {
+  const tab = tabManager.unarchiveTab(tabId);
+  if (!tab) return false;
+
+  // Re-create view (same path as app startup restoration)
+  createViewForTab(tab);
+
+  // Switch to the reactivated tab
+  switchToTab(tab.id);
+
+  // Notify sidebar
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('tabs-updated', getTabsForRenderer());
+    mainWindow.webContents.send('archived-tabs-updated', getArchivedTabsForRenderer());
+  }
+  updateShortcuts();
+
+  return true;
+});
+
+ipcMain.handle('get-archived-tabs', () => {
+  return getArchivedTabsForRenderer();
+});
+
 // Native context menu for tabs
 ipcMain.handle('show-tab-context-menu', async (event, tabId) => {
   const tab = tabManager.getTab(tabId);
@@ -1118,6 +1229,10 @@ ipcMain.handle('show-tab-context-menu', async (event, tabId) => {
     }
 
     template.push({ type: 'separator' });
+    template.push({
+      label: 'Archive Tab',
+      click: () => resolve('archive')
+    });
     template.push({
       label: 'Close Tab',
       click: () => resolve('close')
@@ -1923,10 +2038,12 @@ ipcMain.on('ai-response-complete', (event, data) => {
   const title = `${tab.name} finished`;
   const body = sanitizeNotificationText(preview) || 'Response complete';
 
+  const soundSetting = store.get('notifications.sound', 'crossai-pulse');
   const notification = new Notification({
     title: title,
     body: body,
-    silent: false
+    silent: soundSetting === 'none',
+    sound: soundSetting !== 'none' ? soundSetting : undefined
   });
 
   notification.on('click', () => {
@@ -2034,6 +2151,25 @@ function createMenu() {
   Menu.setApplicationMenu(menu);
 }
 
+/**
+ * Copy bundled notification sounds to ~/Library/Sounds/ so macOS can find them by name.
+ */
+function installCustomSounds() {
+  if (process.platform !== 'darwin') return;
+  const userSoundsDir = path.join(app.getPath('home'), 'Library', 'Sounds');
+  fs.mkdirSync(userSoundsDir, { recursive: true });
+  const bundledSoundsDir = path.join(__dirname, '..', 'assets', 'sounds');
+  if (!fs.existsSync(bundledSoundsDir)) return;
+  for (const file of fs.readdirSync(bundledSoundsDir)) {
+    if (file.endsWith('.aiff')) {
+      const dest = path.join(userSoundsDir, file);
+      if (!fs.existsSync(dest)) {
+        fs.copyFileSync(path.join(bundledSoundsDir, file), dest);
+      }
+    }
+  }
+}
+
 // App lifecycle
 app.whenReady().then(() => {
   // Set dock icon on macOS
@@ -2046,6 +2182,7 @@ app.whenReady().then(() => {
     }
   }
 
+  installCustomSounds();
   createMenu();
   createWindow();
   registerShortcuts();

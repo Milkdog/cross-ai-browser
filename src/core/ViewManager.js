@@ -239,11 +239,23 @@ class ViewManager {
     console.log('[ViewManager] _getTabIdForCwd looking for:', normalizedCwd);
     console.log('[ViewManager] terminalViews has:', cwdsInViews);
 
+    // First pass: exact match
     for (const [tabId] of this.terminalViews) {
       const tabCwd = this.store.get(`tabData.${tabId}.cwd`);
       if (tabCwd) {
         const normalizedTabCwd = tabCwd.replace(/\/+$/, '');
         if (normalizedCwd === normalizedTabCwd) {
+          return tabId;
+        }
+      }
+    }
+
+    // Second pass: subdirectory match (subagents may run in child dirs)
+    for (const [tabId] of this.terminalViews) {
+      const tabCwd = this.store.get(`tabData.${tabId}.cwd`);
+      if (tabCwd) {
+        const normalizedTabCwd = tabCwd.replace(/\/+$/, '');
+        if (normalizedCwd.startsWith(normalizedTabCwd + '/')) {
           return tabId;
         }
       }

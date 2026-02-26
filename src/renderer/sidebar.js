@@ -6,6 +6,8 @@ let historyExpanded = false;
 let tabsWithCompletions = new Set();
 let tabsStreaming = new Map(); // tabId -> { isStreaming, taskDescription }
 let terminalsRunning = new Set(); // tabIds of terminals with active PTY
+let archivedTabs = [];
+let archivedExpanded = false;
 
 // Service icons (duplicated from ServiceRegistry for renderer)
 const SERVICE_ICONS = {
@@ -130,6 +132,25 @@ async function init() {
     content.style.display = historyExpanded ? 'block' : 'none';
   });
 
+  // Load initial archived tabs
+  archivedTabs = await window.electronAPI.getArchivedTabs();
+  renderArchivedTabs();
+
+  // Listen for archived tabs updates
+  window.electronAPI.onArchivedTabsUpdated((tabs) => {
+    archivedTabs = tabs;
+    renderArchivedTabs();
+  });
+
+  // Archived panel toggle
+  document.getElementById('archived-header').addEventListener('click', () => {
+    archivedExpanded = !archivedExpanded;
+    const panel = document.getElementById('archived-panel');
+    const content = document.getElementById('archived-content');
+    panel.classList.toggle('expanded', archivedExpanded);
+    content.style.display = archivedExpanded ? 'block' : 'none';
+  });
+
   // Reload button
   document.getElementById('reload-btn').addEventListener('click', () => {
     if (activeTabId) {
@@ -192,6 +213,14 @@ function renderTabs(tabs) {
 
     btn.appendChild(textContainer);
 
+    // Add keyboard shortcut badge
+    if (tab.shortcut) {
+      const shortcutBadge = document.createElement('div');
+      shortcutBadge.className = 'tab-shortcut';
+      shortcutBadge.textContent = tab.shortcut;
+      btn.appendChild(shortcutBadge);
+    }
+
     // Add streaming indicator if tab is streaming
     const streamingState = tabsStreaming.get(tab.id);
     if (streamingState && streamingState.isStreaming) {
@@ -249,6 +278,8 @@ function renderTabs(tabs) {
         window.electronAPI.restartTerminal(tab.id);
       } else if (action === 'shutdown') {
         window.electronAPI.shutdownTerminal(tab.id);
+      } else if (action === 'archive') {
+        window.electronAPI.archiveTab(tab.id);
       } else if (action === 'close') {
         window.electronAPI.closeTab(tab.id);
       }
@@ -330,6 +361,94 @@ document.addEventListener('keydown', (e) => {
     }
   }
 });
+
+// ==================== Archived Tabs Functions ====================
+
+function renderArchivedTabs() {
+  const panel = document.getElementById('archived-panel');
+  const container = document.getElementById('archived-list');
+  const emptyState = document.getElementById('archived-empty');
+  const countBadge = document.getElementById('archived-count');
+
+  // Show/hide the entire panel based on whether there are archived tabs
+  if (archivedTabs.length === 0) {
+    container.textContent = '';
+    panel.style.display = 'none';
+    return;
+  }
+
+  panel.style.display = '';
+
+  // Sync expanded state with DOM
+  const content = document.getElementById('archived-content');
+  content.style.display = archivedExpanded ? 'block' : 'none';
+  panel.classList.toggle('expanded', archivedExpanded);
+
+  // Update count badge
+  countBadge.textContent = archivedTabs.length;
+
+  container.textContent = '';
+
+  emptyState.style.display = 'none';
+  container.style.display = 'flex';
+
+  archivedTabs.forEach(tab => {
+    const item = document.createElement('div');
+    item.className = 'archived-item';
+    item.dataset.tabId = tab.id;
+
+    const iconDiv = document.createElement('div');
+    iconDiv.className = 'archived-icon';
+    // Use template for safe SVG insertion (same pattern as renderTabs)
+    const template = document.createElement('template');
+    template.innerHTML = (SERVICE_ICONS[tab.serviceType] || '').trim();
+    if (template.content.firstChild) {
+      iconDiv.appendChild(template.content.cloneNode(true));
+    }
+    item.appendChild(iconDiv);
+
+    const info = document.createElement('div');
+    info.className = 'archived-info';
+
+    const name = document.createElement('div');
+    name.className = 'archived-name';
+    name.textContent = tab.name;
+    name.title = tab.name;
+    info.appendChild(name);
+
+    item.appendChild(info);
+
+    // Reactivate button with restore icon
+    const reactivateBtn = document.createElement('button');
+    reactivateBtn.className = 'archived-reactivate-btn';
+    reactivateBtn.title = 'Reactivate';
+    const restoreSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    restoreSvg.setAttribute('viewBox', '0 0 24 24');
+    restoreSvg.setAttribute('fill', 'none');
+    restoreSvg.setAttribute('stroke', 'currentColor');
+    restoreSvg.setAttribute('stroke-width', '2');
+    const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    polyline.setAttribute('points', '1 4 1 10 7 10');
+    restoreSvg.appendChild(polyline);
+    const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    pathEl.setAttribute('d', 'M3.51 15a9 9 0 1 0 2.13-9.36L1 10');
+    restoreSvg.appendChild(pathEl);
+    reactivateBtn.appendChild(restoreSvg);
+
+    reactivateBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      window.electronAPI.unarchiveTab(tab.id);
+    });
+    item.appendChild(reactivateBtn);
+
+    // Click on item to reactivate
+    item.addEventListener('click', () => {
+      window.electronAPI.unarchiveTab(tab.id);
+    });
+
+    container.appendChild(item);
+  });
+}
 
 // ==================== Download Functions ====================
 

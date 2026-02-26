@@ -202,13 +202,15 @@ body {
   }
 }
 
-/* Slight glow effect on tab with completion */
-.service-btn.has-completion {
-  background: var(--color-status-successMuted);
-}
-
-.service-btn.has-completion:hover {
-  background: rgba(34, 197, 94, 0.15);
+/* Attention badge - shows when tab needs user input (overrides completion badge) */
+.attention-badge {
+  width: 8px;
+  height: 8px;
+  min-width: 8px;
+  border-radius: 50%;
+  background: var(--color-status-warning, #eab308);
+  box-shadow: 0 0 6px rgba(234, 179, 8, 0.6);
+  animation: pulse-badge 2s ease-in-out infinite;
 }
 
 /* ==================== Streaming Indicator ==================== */
@@ -256,52 +258,12 @@ body {
   }
 }
 
-/* Streaming tab highlight - subtler than active to distinguish */
+/* Streaming tabs expand to fit subtitle */
 .service-btn.is-streaming {
-  background: var(--color-bg-card, #2a2a30);
-  border-color: var(--color-primary-border);
   height: auto;
   min-height: 40px;
   padding-top: var(--spacing-1, 4px);
   padding-bottom: var(--spacing-1, 4px);
-}
-
-.service-btn.is-streaming:hover {
-  background: var(--color-bg-cardHover, #32323a);
-}
-
-/* Active + streaming keeps the full active indigo treatment */
-.service-btn.active.is-streaming {
-  background: var(--color-primary-muted);
-}
-
-/* Active tabs don't need the streaming left bar — the indigo active bar is already showing */
-.service-btn.active.is-streaming::after {
-  display: none;
-}
-
-/* Left border indicator for streaming tabs */
-.service-btn.is-streaming::after {
-  content: '';
-  position: absolute;
-  left: -1px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 3px;
-  height: 20px;
-  background: var(--color-primary-base);
-  border-radius: 0 2px 2px 0;
-  animation: streaming-border-pulse 1.5s ease-in-out infinite;
-}
-
-@keyframes streaming-border-pulse {
-  0%, 100% {
-    opacity: 0.5;
-  }
-  50% {
-    opacity: 1;
-    box-shadow: 0 0 8px rgba(99, 102, 241, 0.6);
-  }
 }
 
 /* Drag and drop states */

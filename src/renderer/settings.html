@@ -490,12 +490,28 @@
           </div>
 
           <div class="settings-group">
-            <label class="settings-label">Notification sound</label>
+            <label class="settings-label">Task complete sound</label>
             <div class="sound-picker">
-              <select id="notification-sound" class="settings-select">
+              <select id="sound-complete" class="settings-select">
                 <option value="none">None (silent)</option>
               </select>
-              <button id="preview-sound-btn" class="preview-sound-btn" title="Preview sound">
+              <button class="preview-sound-btn" data-target="sound-complete" title="Preview sound">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+                  <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="settings-group">
+            <label class="settings-label">Needs attention sound</label>
+            <div class="sound-picker">
+              <select id="sound-attention" class="settings-select">
+                <option value="none">None (silent)</option>
+              </select>
+              <button class="preview-sound-btn" data-target="sound-attention" title="Preview sound">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
                   <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
@@ -614,8 +630,8 @@
   <script>
     const notificationsEnabled = document.getElementById('notifications-enabled');
     const notificationMode = document.getElementById('notification-mode');
-    const notificationSound = document.getElementById('notification-sound');
-    const previewSoundBtn = document.getElementById('preview-sound-btn');
+    const soundComplete = document.getElementById('sound-complete');
+    const soundAttention = document.getElementById('sound-attention');
     const downloadSaveMode = document.getElementById('download-save-mode');
     const clearHistoryBtn = document.getElementById('clear-history-btn');
     const doneBtn = document.getElementById('done-btn');
@@ -686,49 +702,49 @@
       themePreview.querySelector('.preview-yellow').style.color = theme.yellow;
     }
 
+    function populateSoundSelect(selectEl, sounds, currentValue) {
+      while (selectEl.firstChild) {
+        selectEl.removeChild(selectEl.firstChild);
+      }
+
+      const noneOption = document.createElement('option');
+      noneOption.value = 'none';
+      noneOption.textContent = 'None (silent)';
+      selectEl.appendChild(noneOption);
+
+      if (sounds.custom.length > 0) {
+        const customGroup = document.createElement('optgroup');
+        customGroup.label = 'Custom';
+        sounds.custom.forEach(s => {
+          const opt = document.createElement('option');
+          opt.value = s.id;
+          opt.textContent = s.name;
+          customGroup.appendChild(opt);
+        });
+        selectEl.appendChild(customGroup);
+      }
+
+      if (sounds.system.length > 0) {
+        const systemGroup = document.createElement('optgroup');
+        systemGroup.label = 'System';
+        sounds.system.forEach(s => {
+          const opt = document.createElement('option');
+          opt.value = s.id;
+          opt.textContent = s.name;
+          systemGroup.appendChild(opt);
+        });
+        selectEl.appendChild(systemGroup);
+      }
+
+      selectEl.value = currentValue;
+    }
+
     async function loadNotificationSounds(settings) {
       try {
-        const { custom, system } = await window.electronAPI.getNotificationSounds();
-        const currentSound = (settings && settings.notifications && settings.notifications.sound) || 'crossai-pulse';
-
-        // Clear existing options
-        while (notificationSound.firstChild) {
-          notificationSound.removeChild(notificationSound.firstChild);
-        }
-
-        // "None" option
-        const noneOption = document.createElement('option');
-        noneOption.value = 'none';
-        noneOption.textContent = 'None (silent)';
-        notificationSound.appendChild(noneOption);
-
-        // Custom sounds group
-        if (custom.length > 0) {
-          const customGroup = document.createElement('optgroup');
-          customGroup.label = 'Custom';
-          custom.forEach(s => {
-            const opt = document.createElement('option');
-            opt.value = s.id;
-            opt.textContent = s.name;
-            customGroup.appendChild(opt);
-          });
-          notificationSound.appendChild(customGroup);
-        }
-
-        // System sounds group
-        if (system.length > 0) {
-          const systemGroup = document.createElement('optgroup');
-          systemGroup.label = 'System';
-          system.forEach(s => {
-            const opt = document.createElement('option');
-            opt.value = s.id;
-            opt.textContent = s.name;
-            systemGroup.appendChild(opt);
-          });
-          notificationSound.appendChild(systemGroup);
-        }
-
-        notificationSound.value = currentSound;
+        const sounds = await window.electronAPI.getNotificationSounds();
+        const notif = settings && settings.notifications;
+        populateSoundSelect(soundComplete, sounds, (notif && notif.soundComplete) || 'crossai-chime');
+        populateSoundSelect(soundAttention, sounds, (notif && notif.soundAttention) || 'crossai-pulse');
       } catch (e) {
         console.error('Failed to load notification sounds:', e);
       }
@@ -745,16 +761,22 @@
       window.electronAPI.setSetting('notifications.mode', notificationMode.value);
     };
 
-    notificationSound.onchange = () => {
-      window.electronAPI.setSetting('notifications.sound', notificationSound.value);
+    soundComplete.onchange = () => {
+      window.electronAPI.setSetting('notifications.soundComplete', soundComplete.value);
     };
 
-    previewSoundBtn.onclick = () => {
-      const selected = notificationSound.value;
-      if (selected !== 'none') {
-        window.electronAPI.previewSound(selected);
-      }
+    soundAttention.onchange = () => {
+      window.electronAPI.setSetting('notifications.soundAttention', soundAttention.value);
     };
+
+    document.querySelectorAll('.preview-sound-btn').forEach(btn => {
+      btn.onclick = () => {
+        const targetSelect = document.getElementById(btn.dataset.target);
+        if (targetSelect && targetSelect.value !== 'none') {
+          window.electronAPI.previewSound(targetSelect.value);
+        }
+      };
+    });
 
     downloadSaveMode.onchange = async () => {
       await window.electronAPI.setDownloadSaveMode(downloadSaveMode.value);

@@ -6,6 +6,7 @@ let tabsUpdatedListener = null;
 let downloadsUpdatedListener = null;
 let historyUpdatedListener = null;
 let completionBadgesListener = null;
+let attentionBadgesListener = null;
 let streamingStateListener = null;
 let terminalRunningStateListener = null;
 let settingsActiveListener = null;
@@ -73,8 +74,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   unarchiveTab: (tabId) => ipcRenderer.invoke('unarchive-tab', tabId),
   getArchivedTabs: () => ipcRenderer.invoke('get-archived-tabs'),
 
-  // Completion badges
+  // Completion and attention badges
   getCompletionBadges: () => ipcRenderer.invoke('get-completion-badges'),
+  getAttentionBadges: () => ipcRenderer.invoke('get-attention-badges'),
 
   // Terminal running state
   getRunningTerminals: () => ipcRenderer.invoke('get-running-terminals'),
@@ -118,6 +120,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }
     completionBadgesListener = (event, tabIds) => callback(tabIds);
     ipcRenderer.on('completion-badges-updated', completionBadgesListener);
+  },
+
+  onAttentionBadgesUpdated: (callback) => {
+    if (attentionBadgesListener) {
+      ipcRenderer.removeListener('attention-badges-updated', attentionBadgesListener);
+    }
+    attentionBadgesListener = (event, tabIds) => callback(tabIds);
+    ipcRenderer.on('attention-badges-updated', attentionBadgesListener);
   },
 
   onStreamingStateChanged: (callback) => {
@@ -174,6 +184,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeListener('completion-badges-updated', completionBadgesListener);
       completionBadgesListener = null;
     }
+    if (attentionBadgesListener) {
+      ipcRenderer.removeListener('attention-badges-updated', attentionBadgesListener);
+      attentionBadgesListener = null;
+    }
     if (streamingStateListener) {
       ipcRenderer.removeListener('streaming-state-changed', streamingStateListener);
       streamingStateListener = null;
@@ -209,6 +223,9 @@ window.addEventListener('beforeunload', () => {
   }
   if (completionBadgesListener) {
     ipcRenderer.removeListener('completion-badges-updated', completionBadgesListener);
+  }
+  if (attentionBadgesListener) {
+    ipcRenderer.removeListener('attention-badges-updated', attentionBadgesListener);
   }
   if (streamingStateListener) {
     ipcRenderer.removeListener('streaming-state-changed', streamingStateListener);

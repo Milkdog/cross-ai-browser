@@ -62,7 +62,8 @@ const store = new Store({
     notifications: {
       enabled: true,
       mode: 'always', // 'always', 'unfocused', 'inactive-tab'
-      sound: 'crossai-pulse' // custom sound name, system sound name, or 'none'
+      soundComplete: 'crossai-chime', // sound for task finished (Stop/TaskCompleted)
+      soundAttention: 'crossai-pulse' // sound for needs attention (permission, idle, question)
     },
     tabs: [], // Persisted tabs (new format)
     tabData: {}, // Additional tab data (cwd for terminals)
@@ -95,36 +96,54 @@ let settingsView = null;
 let settingsActive = false;
 let servicePickerWindow = null;
 
-// Track tabs with unread completions (for badge display)
+// Track tabs with unread completions and attention requests (for badge display)
 const tabsWithCompletions = new Set();
+const tabsNeedingAttention = new Set();
 
-// Notify sidebar of completion badge changes
-function sendCompletionBadges() {
+// Notify sidebar of badge changes
+function sendBadges() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('completion-badges-updated', Array.from(tabsWithCompletions));
+    mainWindow.webContents.send('attention-badges-updated', Array.from(tabsNeedingAttention));
   }
 }
 
-// Mark a tab as having an unread completion
+// Mark a tab as having an unread completion (green dot)
 function markTabCompleted(tabId) {
   const activeTabId = viewManager?.getActiveTabId();
   const isWindowFocused = mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused();
 
-  // Show badge if:
-  // 1. Tab is not the active tab, OR
-  // 2. Window is not focused (user is in another app)
   if (tabId !== activeTabId || !isWindowFocused) {
     tabsWithCompletions.add(tabId);
-    sendCompletionBadges();
+    sendBadges();
   }
 }
 
-// Clear completion badge for a tab
-function clearTabCompletion(tabId) {
+// Mark a tab as needing attention (yellow dot) — overrides green
+function markTabNeedsAttention(tabId) {
+  const activeTabId = viewManager?.getActiveTabId();
+  const isWindowFocused = mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused();
+
+  if (tabId !== activeTabId || !isWindowFocused) {
+    tabsNeedingAttention.add(tabId);
+    // Remove from completions since attention overrides it
+    tabsWithCompletions.delete(tabId);
+    sendBadges();
+  }
+}
+
+// Clear all badges for a tab
+function clearTabBadges(tabId) {
+  let changed = false;
   if (tabsWithCompletions.has(tabId)) {
     tabsWithCompletions.delete(tabId);
-    sendCompletionBadges();
+    changed = true;
   }
+  if (tabsNeedingAttention.has(tabId)) {
+    tabsNeedingAttention.delete(tabId);
+    changed = true;
+  }
+  if (changed) sendBadges();
 }
 
 // Note: Terminal hook completion is now handled entirely through ViewManager's
@@ -346,8 +365,13 @@ function createWindow() {
       const tab = tabManager.getTab(tabId);
       if (!tab) return;
 
-      // Mark tab as completed for badge
-      markTabCompleted(tabId);
+      // Mark tab with appropriate badge
+      const isAttention = event && event.type === 'Notification';
+      if (isAttention) {
+        markTabNeedsAttention(tabId);
+      } else {
+        markTabCompleted(tabId);
+      }
 
       const settings = store.get('notifications');
       if (!settings.enabled) return;
@@ -393,7 +417,9 @@ function createWindow() {
         body = sanitizeNotificationText(message) || 'Task completed';
       }
 
-      const soundSetting = store.get('notifications.sound', 'crossai-pulse');
+      const soundSetting = isAttention
+        ? store.get('notifications.soundAttention', 'crossai-pulse')
+        : store.get('notifications.soundComplete', 'crossai-chime');
       const notification = new Notification({
         title: title,
         body: body,
@@ -457,7 +483,7 @@ function createWindow() {
     // Clear completion badge for the active tab (it was set while window was unfocused)
     const activeTabId = viewManager.getActiveTabId();
     if (activeTabId) {
-      clearTabCompletion(activeTabId);
+      clearTabBadges(activeTabId);
     }
   });
 
@@ -582,7 +608,7 @@ function switchToTab(tabId) {
   viewManager.switchToTab(tabId);
 
   // Clear completion badge for this tab
-  clearTabCompletion(tabId);
+  clearTabBadges(tabId);
 
   // Update window title
   mainWindow.setTitle(`${tab.name} - Cross AI Browser`);
@@ -834,6 +860,10 @@ ipcMain.handle('get-completion-badges', () => {
   return Array.from(tabsWithCompletions);
 });
 
+ipcMain.handle('get-attention-badges', () => {
+  return Array.from(tabsNeedingAttention);
+});
+
 ipcMain.handle('get-running-terminals', () => {
   return viewManager.getRunningTerminals();
 });
@@ -863,7 +893,7 @@ ipcMain.handle('get-settings', () => {
 
 ipcMain.on('set-setting', (event, key, value) => {
   // Validate setting keys
-  const allowedKeys = ['notifications', 'notifications.enabled', 'notifications.mode', 'notifications.sound', 'terminal.theme'];
+  const allowedKeys = ['notifications', 'notifications.enabled', 'notifications.mode', 'notifications.soundComplete', 'notifications.soundAttention', 'terminal.theme'];
   if (allowedKeys.includes(key)) {
     // Validate terminal theme
     if (key === 'terminal.theme' && !TerminalThemes.isValidTheme(value)) {
@@ -2038,7 +2068,7 @@ ipcMain.on('ai-response-complete', (event, data) => {
   const title = `${tab.name} finished`;
   const body = sanitizeNotificationText(preview) || 'Response complete';
 
-  const soundSetting = store.get('notifications.sound', 'crossai-pulse');
+  const soundSetting = store.get('notifications.soundComplete', 'crossai-chime');
   const notification = new Notification({
     title: title,
     body: body,

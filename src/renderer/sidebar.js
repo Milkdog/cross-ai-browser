@@ -4,6 +4,7 @@ let downloadHistory = [];
 let historySessions = [];
 let historyExpanded = false;
 let tabsWithCompletions = new Set();
+let tabsNeedingAttention = new Set();
 let tabsStreaming = new Map(); // tabId -> { isStreaming, taskDescription }
 let terminalsRunning = new Set(); // tabIds of terminals with active PTY
 let archivedTabs = [];
@@ -85,9 +86,11 @@ async function init() {
     renderHistory();
   });
 
-  // Load initial completion badges
+  // Load initial completion and attention badges
   const initialBadges = await window.electronAPI.getCompletionBadges();
   tabsWithCompletions = new Set(initialBadges);
+  const initialAttention = await window.electronAPI.getAttentionBadges();
+  tabsNeedingAttention = new Set(initialAttention);
 
   // Load initial terminal running states
   const initialRunning = await window.electronAPI.getRunningTerminals();
@@ -98,6 +101,12 @@ async function init() {
   // Listen for completion badge updates
   window.electronAPI.onCompletionBadgesUpdated((tabIds) => {
     tabsWithCompletions = new Set(tabIds);
+    renderTabs(allTabs);
+  });
+
+  // Listen for attention badge updates
+  window.electronAPI.onAttentionBadgesUpdated((tabIds) => {
+    tabsNeedingAttention = new Set(tabIds);
     renderTabs(allTabs);
   });
 
@@ -250,12 +259,15 @@ function renderTabs(tabs) {
       }
     }
 
-    // Add completion badge if tab has unread completion
-    if (tabsWithCompletions.has(tab.id)) {
+    // Add attention badge (yellow, overrides green) or completion badge (green)
+    if (tabsNeedingAttention.has(tab.id)) {
+      const badge = document.createElement('div');
+      badge.className = 'attention-badge';
+      btn.appendChild(badge);
+    } else if (tabsWithCompletions.has(tab.id)) {
       const badge = document.createElement('div');
       badge.className = 'completion-badge';
       btn.appendChild(badge);
-      btn.classList.add('has-completion');
     }
 
     // Mark terminal tabs as stopped if PTY is not running

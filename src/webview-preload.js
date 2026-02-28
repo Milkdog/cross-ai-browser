@@ -428,6 +428,36 @@ class StreamingDetector {
       }
     }
 
+    // Method 4: Loading spinner (animated SVG circles) — catches research/thinking mode
+    const svgs = document.querySelectorAll('svg');
+    for (const svg of svgs) {
+      const animates = svg.querySelectorAll('animate, animateTransform');
+      if (animates.length > 0 && svg.offsetParent !== null) {
+        // Check it's in the conversation area, not the nav/sidebar
+        const inConversation = svg.closest('[class*="conversation"], [class*="message"], main, [role="main"], [class*="react-scroll"]');
+        if (inConversation) {
+          this.log('Detected: animated SVG spinner in conversation');
+          return true;
+        }
+      }
+    }
+
+    // Method 5: Research/tool-use progress indicators ("sources and counting", "Searching")
+    const allText = document.querySelectorAll('span, p, div');
+    for (const el of allText) {
+      const text = el.textContent || '';
+      if ((text.includes('sources and counting') ||
+           text.includes('Searching') ||
+           text.includes('Analyzing')) &&
+          el.offsetParent !== null) {
+        const inConversation = el.closest('[class*="conversation"], [class*="message"], main, [role="main"], [class*="react-scroll"]');
+        if (inConversation) {
+          this.log('Detected: research/tool-use progress text');
+          return true;
+        }
+      }
+    }
+
     return false;
   }
 

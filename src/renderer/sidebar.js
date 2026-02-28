@@ -197,18 +197,31 @@ function renderTabs(tabs) {
       btn.title = tab.name;
     }
 
-    // Create icon container
+    // Create icon + shortcut wrapper (vertical stack)
+    const iconWrapper = document.createElement('div');
+    iconWrapper.className = 'icon-wrapper';
+
     const iconDiv = document.createElement('div');
     iconDiv.className = 'service-icon';
 
-    // Use template for safe SVG insertion
+    // Use safe template for SVG insertion (SERVICE_ICONS are hardcoded constants)
     const template = document.createElement('template');
-    template.innerHTML = (SERVICE_ICONS[tab.serviceType] || '').trim();
+    template.innerHTML = (SERVICE_ICONS[tab.serviceType] || '').trim(); // safe: hardcoded SVG constants
     if (template.content.firstChild) {
       iconDiv.appendChild(template.content.cloneNode(true));
     }
 
-    btn.appendChild(iconDiv);
+    iconWrapper.appendChild(iconDiv);
+
+    // Add keyboard shortcut badge below icon
+    if (tab.shortcut) {
+      const shortcutBadge = document.createElement('div');
+      shortcutBadge.className = 'tab-shortcut';
+      shortcutBadge.textContent = tab.shortcut;
+      iconWrapper.appendChild(shortcutBadge);
+    }
+
+    btn.appendChild(iconWrapper);
 
     // Create text container for name
     const textContainer = document.createElement('div');
@@ -221,14 +234,6 @@ function renderTabs(tabs) {
     textContainer.appendChild(nameLabel);
 
     btn.appendChild(textContainer);
-
-    // Add keyboard shortcut badge
-    if (tab.shortcut) {
-      const shortcutBadge = document.createElement('div');
-      shortcutBadge.className = 'tab-shortcut';
-      shortcutBadge.textContent = tab.shortcut;
-      btn.appendChild(shortcutBadge);
-    }
 
     // Add streaming indicator if tab is streaming
     const streamingState = tabsStreaming.get(tab.id);
@@ -346,6 +351,8 @@ function renderTabs(tabs) {
 
     container.appendChild(btn);
   });
+
+  updateActiveState();
 }
 
 function updateActiveState() {

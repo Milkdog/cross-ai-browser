@@ -10,6 +10,7 @@ import {
   createPrompt,
   updatePrompt,
   deletePrompt,
+  duplicatePrompt,
   toggleFavorite,
   markAsDone,
   markAsTesting,
@@ -56,35 +57,45 @@ export function usePrompts(projectId = null) {
   }, [user]);
 
   // Helper to organize prompts into sections
-  // Order: Reusable -> Regular -> Testing -> Done
-  // Within Reusable: global first, then project, then favorites
+  // Order: Notes -> Reusable -> Regular -> Testing -> Done
+  // Notes are a distinct item type with no lifecycle state.
   const organizedPrompts = useCallback(() => {
-    // Sort helper: favorites first, then by order
+    const isNote = (p) => p.type === 'note';
+
     const sortWithFavoritesFirst = (a, b) => {
       if (a.isFavorite && !b.isFavorite) return -1;
       if (!a.isFavorite && b.isFavorite) return 1;
       return (a.order || 0) - (b.order || 0);
     };
 
-    // Reusable prompts: global first, then project, then favorites within each
-    const reusable = prompts
-      .filter(p => p.reusable)
+    // Notes: global first, then favorites, then order
+    const notes = prompts
+      .filter(isNote)
       .sort((a, b) => {
-        // Global prompts first
         if (a.scope === 'global' && b.scope !== 'global') return -1;
         if (a.scope !== 'global' && b.scope === 'global') return 1;
-        // Then favorites
         if (a.isFavorite && !b.isFavorite) return -1;
         if (!a.isFavorite && b.isFavorite) return 1;
         return (a.order || 0) - (b.order || 0);
       });
 
-    // Non-reusable prompts can be in regular, testing, or done
-    const regular = prompts
+    const promptItems = prompts.filter(p => !isNote(p));
+
+    const reusable = promptItems
+      .filter(p => p.reusable)
+      .sort((a, b) => {
+        if (a.scope === 'global' && b.scope !== 'global') return -1;
+        if (a.scope !== 'global' && b.scope === 'global') return 1;
+        if (a.isFavorite && !b.isFavorite) return -1;
+        if (!a.isFavorite && b.isFavorite) return 1;
+        return (a.order || 0) - (b.order || 0);
+      });
+
+    const regular = promptItems
       .filter(p => !p.reusable && !p.done && !p.testing)
       .sort(sortWithFavoritesFirst);
 
-    const testing = prompts
+    const testing = promptItems
       .filter(p => !p.reusable && p.testing && !p.done)
       .sort((a, b) => {
         if (a.isFavorite && !b.isFavorite) return -1;
@@ -92,11 +103,11 @@ export function usePrompts(projectId = null) {
         return (b.testingStartedAt || 0) - (a.testingStartedAt || 0);
       });
 
-    const done = prompts
+    const done = promptItems
       .filter(p => !p.reusable && p.done)
       .sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
 
-    return { reusable, regular, testing, done };
+    return { notes, reusable, regular, testing, done };
   }, [prompts]);
 
   // Get unique labels from all prompts
@@ -163,6 +174,23 @@ export function usePrompts(projectId = null) {
     return restorePrompt(promptId);
   };
 
+  const handleDuplicate = async (promptId) => {
+    if (!user) return { success: false, error: 'Not authenticated' };
+    const source = prompts.find(p => p.id === promptId);
+    if (!source) return { success: false, error: 'Prompt not found' };
+    setError(null);
+    const result = await duplicatePrompt(user.uid, source, prompts.length);
+    if (!result.success) setError(result.error);
+    return result;
+  };
+
+  const handleConvertType = async (promptId) => {
+    const source = prompts.find(p => p.id === promptId);
+    if (!source) return { success: false, error: 'Prompt not found' };
+    const newType = source.type === 'note' ? 'prompt' : 'note';
+    return updatePrompt(promptId, { type: newType });
+  };
+
   return {
     prompts,
     projects,
@@ -173,6 +201,8 @@ export function usePrompts(projectId = null) {
     createPrompt: handleCreate,
     updatePrompt: handleUpdate,
     deletePrompt: handleDelete,
+    duplicatePrompt: handleDuplicate,
+    convertType: handleConvertType,
     toggleFavorite: handleToggleFavorite,
     markAsDone: handleMarkDone,
     markAsTesting: handleMarkTesting,

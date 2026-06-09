@@ -35,6 +35,15 @@ service cloud.firestore {
       allow delete: if request.auth != null && request.auth.uid == resource.data.userId;
     }
 
+    // User label registry - single doc per user, docId == userId
+    match /userLabels/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if request.auth != null
+                   && request.auth.uid == userId
+                   && request.resource.data.userId == userId
+                   && (!request.resource.data.keys().hasAny(['labels']) || request.resource.data.labels is list);
+    }
+
     // Validate prompt fields
     function validatePromptFields(data) {
       return data.keys().hasAll(['userId', 'prompt'])

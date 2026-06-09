@@ -4,35 +4,17 @@
  */
 
 import { useState, useRef, useEffect } from 'react';
+import { resolveLabelColor } from '../utils/labelColors';
+import ImageThumbnail from './ImageThumbnail';
+import { uploadImageWithThumbnail, generateImageId, deleteImage } from '../services/images';
+import { useAuth } from '../hooks/useAuth';
 
-// Label colors matching design-tokens.js
-const LABEL_COLORS = [
-  { bg: '#6366f1', text: '#ffffff' },  // Indigo
-  { bg: '#8b5cf6', text: '#ffffff' },  // Violet
-  { bg: '#d946ef', text: '#ffffff' },  // Fuchsia
-  { bg: '#ec4899', text: '#ffffff' },  // Pink
-  { bg: '#f43f5e', text: '#ffffff' },  // Rose
-  { bg: '#ef4444', text: '#ffffff' },  // Red
-  { bg: '#f97316', text: '#ffffff' },  // Orange
-  { bg: '#eab308', text: '#1a1a20' },  // Yellow (dark text)
-  { bg: '#22c55e', text: '#ffffff' },  // Green
-  { bg: '#14b8a6', text: '#ffffff' },  // Teal
-  { bg: '#06b6d4', text: '#1a1a20' },  // Cyan (dark text)
-  { bg: '#3b82f6', text: '#ffffff' },  // Blue
-];
+const MAX_IMAGES = 10;
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
-// Generate a deterministic color index from label name
-function getLabelColorIndex(label) {
-  let hash = 0;
-  for (let i = 0; i < label.length; i++) {
-    const char = label.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32-bit integer
-  }
-  return Math.abs(hash) % LABEL_COLORS.length;
-}
-
-export default function PromptModal({ prompt, allLabels, onSave, onClose }) {
+export default function PromptModal({ prompt, allLabels, labelColors, onSave, onClose }) {
+  const { user } = useAuth();
+  const [type, setType] = useState(prompt?.type === 'note' ? 'note' : 'prompt');
   const [title, setTitle] = useState(prompt?.title || '');
   const [content, setContent] = useState(prompt?.prompt || '');
   const [labels, setLabels] = useState(prompt?.labels || []);
@@ -41,18 +23,44 @@ export default function PromptModal({ prompt, allLabels, onSave, onClose }) {
   const [scope, setScope] = useState(prompt?.scope || 'project');
   const [saving, setSaving] = useState(false);
 
+  const isNote = type === 'note';
+
+  // Images: existing (already uploaded, have id) + staged (local file, pending upload)
+  const [existingImages, setExistingImages] = useState(prompt?.images || []);
+  const [stagedImages, setStagedImages] = useState([]); // { id, file, previewUrl, filename, size }
+  const [removedImageIds, setRemovedImageIds] = useState([]);
+  const [uploadError, setUploadError] = useState(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const fileInputRef = useRef(null);
+
   // Label suggestions
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const labelInputRef = useRef(null);
 
-  // Global prompts are always reusable
+  // Global prompts are always reusable (except notes, which can't be reusable)
   const isGlobal = scope === 'global';
   useEffect(() => {
+    if (isNote) {
+      if (reusable) setReusable(false);
+      return;
+    }
     if (isGlobal && !reusable) {
       setReusable(true);
     }
-  }, [scope, isGlobal, reusable]);
+  }, [scope, isGlobal, reusable, isNote]);
+
+  // Clean up object URLs when staged images change/unmount
+  useEffect(() => {
+    return () => {
+      stagedImages.forEach(img => {
+        if (img.previewUrl) URL.revokeObjectURL(img.previewUrl);
+      });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const totalImageCount = existingImages.length + stagedImages.length;
 
   const filteredSuggestions = labelInput
     ? allLabels.filter(
@@ -60,19 +68,103 @@ export default function PromptModal({ prompt, allLabels, onSave, onClose }) {
       )
     : [];
 
-  const handleSave = async () => {
-    setSaving(true);
-    await onSave({
-      title,
-      prompt: content,
-      labels,
-      reusable,
-      scope
-    });
-    setSaving(false);
+  const stageFiles = (files) => {
+    setUploadError(null);
+    const accepted = [];
+    for (const file of files) {
+      if (!file.type?.startsWith('image/')) continue;
+      if (file.size > MAX_IMAGE_BYTES) {
+        setUploadError(`${file.name} exceeds 5 MB limit`);
+        continue;
+      }
+      if (totalImageCount + accepted.length >= MAX_IMAGES) {
+        setUploadError(`Max ${MAX_IMAGES} images per prompt`);
+        break;
+      }
+      accepted.push({
+        id: generateImageId(),
+        file,
+        previewUrl: URL.createObjectURL(file),
+        filename: file.name,
+        size: file.size
+      });
+    }
+    if (accepted.length > 0) {
+      setStagedImages(prev => [...prev, ...accepted]);
+    }
   };
 
-  const addLabel = (label) => {
+  const handleFileInput = (e) => {
+    const files = Array.from(e.target.files || []);
+    stageFiles(files);
+    e.target.value = '';
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const files = Array.from(e.dataTransfer.files || []);
+    stageFiles(files);
+  };
+
+  const removeStagedImage = (id) => {
+    setStagedImages(prev => {
+      const target = prev.find(img => img.id === id);
+      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter(img => img.id !== id);
+    });
+  };
+
+  const removeExistingImage = (id) => {
+    setExistingImages(prev => prev.filter(img => img.id !== id));
+    setRemovedImageIds(prev => [...prev, id]);
+  };
+
+  const handleSave = async () => {
+    if (!user) return;
+    setSaving(true);
+    setUploadError(null);
+
+    try {
+      // Upload staged images first
+      const uploadedImages = [];
+      for (const staged of stagedImages) {
+        const result = await uploadImageWithThumbnail(user.uid, staged.file, staged.id);
+        if (!result.success) {
+          setUploadError(`Upload failed: ${result.error}`);
+          setSaving(false);
+          return;
+        }
+        uploadedImages.push(result.image);
+      }
+
+      // Best-effort delete removed image blobs
+      for (const id of removedImageIds) {
+        try { await deleteImage(user.uid, id); } catch {}
+      }
+
+      const mergedImages = [...existingImages, ...uploadedImages];
+
+      await onSave({
+        type,
+        title,
+        prompt: content,
+        labels,
+        reusable: isNote ? false : reusable,
+        scope,
+        images: mergedImages
+      });
+
+      // Revoke preview URLs after successful save
+      stagedImages.forEach(img => {
+        if (img.previewUrl) URL.revokeObjectURL(img.previewUrl);
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const addLabelValue = (label) => {
     const trimmed = label.trim();
     if (trimmed && !labels.includes(trimmed) && labels.length < 5) {
       setLabels([...labels, trimmed]);
@@ -90,9 +182,9 @@ export default function PromptModal({ prompt, allLabels, onSave, onClose }) {
     if (e.key === 'Enter') {
       e.preventDefault();
       if (highlightedIndex >= 0 && filteredSuggestions[highlightedIndex]) {
-        addLabel(filteredSuggestions[highlightedIndex]);
+        addLabelValue(filteredSuggestions[highlightedIndex]);
       } else if (labelInput.trim()) {
-        addLabel(labelInput);
+        addLabelValue(labelInput);
       }
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -113,7 +205,9 @@ export default function PromptModal({ prompt, allLabels, onSave, onClose }) {
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-app-border bg-app-surface flex-shrink-0">
         <h2 className="font-semibold text-app-text">
-          {prompt ? 'Edit Prompt' : 'New Prompt'}
+          {prompt
+            ? (isNote ? 'Edit Note' : 'Edit Prompt')
+            : (isNote ? 'New Note' : 'New Prompt')}
         </h2>
         <button
           onClick={onClose}
@@ -125,6 +219,24 @@ export default function PromptModal({ prompt, allLabels, onSave, onClose }) {
 
       {/* Body - Stacked Layout */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {/* Type selector */}
+        <div className="inline-flex gap-0.5 p-0.5 bg-app-bg border border-app-border rounded-lg">
+          {['prompt', 'note'].map(t => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setType(t)}
+              className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                type === t
+                  ? 'bg-app-accent text-white'
+                  : 'text-app-text-muted hover:text-app-text'
+              }`}
+            >
+              {t === 'prompt' ? 'Prompt' : 'Note'}
+            </button>
+          ))}
+        </div>
+
         {/* Title */}
         <div>
           <label className="block text-xs text-app-text-muted mb-1">Title</label>
@@ -137,17 +249,102 @@ export default function PromptModal({ prompt, allLabels, onSave, onClose }) {
           />
         </div>
 
-        {/* Prompt Content - Large textarea */}
+        {/* Content textarea (label/placeholder change for notes) */}
         <div className="flex-1">
-          <label className="block text-xs text-app-text-muted mb-1">Prompt</label>
+          <label className="block text-xs text-app-text-muted mb-1">
+            {isNote ? 'Content' : 'Prompt'}
+          </label>
           <textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
-            placeholder="Enter your prompt..."
-            className="w-full min-h-[300px] p-3 bg-app-surface border border-app-border rounded-lg text-app-text placeholder-app-text-muted focus:outline-none focus:border-app-accent resize-none"
-            style={{ height: 'calc(100vh - 420px)', minHeight: '200px' }}
+            placeholder={isNote
+              ? 'Note content — saved commands, snippets, reference...'
+              : 'Enter your prompt...'}
+            className="w-full min-h-[200px] p-3 bg-app-surface border border-app-border rounded-lg text-app-text placeholder-app-text-muted focus:outline-none focus:border-app-accent resize-y"
             autoFocus
           />
+        </div>
+
+        {/* Images */}
+        <div>
+          <label className="block text-xs text-app-text-muted mb-1">
+            Images ({totalImageCount}/{MAX_IMAGES})
+          </label>
+
+          <div
+            onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+            onDragLeave={() => setIsDragOver(false)}
+            onDrop={handleDrop}
+            className={`border-2 border-dashed rounded-lg p-3 transition-colors ${
+              isDragOver
+                ? 'border-app-accent bg-app-accent/10'
+                : 'border-app-border bg-app-surface'
+            }`}
+          >
+            {totalImageCount > 0 && (
+              <div className="flex flex-wrap gap-2 mb-3">
+                {existingImages.map(img => (
+                  <div key={img.id} className="relative group">
+                    <ImageThumbnail imageId={img.id} filename={img.filename} size={64} />
+                    <button
+                      type="button"
+                      onClick={() => removeExistingImage(img.id)}
+                      className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                      aria-label="Remove image"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+                {stagedImages.map(img => (
+                  <div key={img.id} className="relative group">
+                    <img
+                      src={img.previewUrl}
+                      alt={img.filename}
+                      className="w-16 h-16 object-cover rounded border border-app-border"
+                    />
+                    <span className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[10px] px-1 rounded-b truncate">
+                      new
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeStagedImage(img.id)}
+                      className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                      aria-label="Remove image"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={totalImageCount >= MAX_IMAGES}
+                className="px-3 py-1.5 text-sm bg-app-bg border border-app-border rounded hover:border-app-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                + Add images
+              </button>
+              <span className="text-xs text-app-text-muted">
+                drop files here · max 5 MB each
+              </span>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={handleFileInput}
+                className="hidden"
+              />
+            </div>
+          </div>
+
+          {uploadError && (
+            <p className="mt-1 text-xs text-red-400">{uploadError}</p>
+          )}
         </div>
 
         {/* Labels */}
@@ -160,8 +357,7 @@ export default function PromptModal({ prompt, allLabels, onSave, onClose }) {
           {labels.length > 0 && (
             <div className="flex flex-wrap gap-2 mb-2">
               {labels.map(label => {
-                const colorIndex = getLabelColorIndex(label);
-                const colors = LABEL_COLORS[colorIndex];
+                const colors = resolveLabelColor(label, labelColors);
                 return (
                   <span
                     key={label}
@@ -207,7 +403,7 @@ export default function PromptModal({ prompt, allLabels, onSave, onClose }) {
                 {filteredSuggestions.map((suggestion, idx) => (
                   <button
                     key={suggestion}
-                    onClick={() => addLabel(suggestion)}
+                    onClick={() => addLabelValue(suggestion)}
                     className={`w-full px-3 py-2 text-left text-sm transition-colors ${
                       idx === highlightedIndex
                         ? 'bg-app-accent text-white'
@@ -237,20 +433,22 @@ export default function PromptModal({ prompt, allLabels, onSave, onClose }) {
             </select>
           </div>
 
-          {/* Reusable checkbox */}
-          <label className={`flex items-center gap-2 ${isGlobal ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
-            <input
-              type="checkbox"
-              checked={reusable}
-              onChange={(e) => setReusable(e.target.checked)}
-              disabled={isGlobal}
-              className="w-4 h-4 rounded border-app-border bg-app-surface text-app-accent focus:ring-app-accent disabled:cursor-not-allowed"
-            />
-            <span className="text-sm text-app-text">Reusable</span>
-            <span className="text-xs text-app-text-muted">
-              {isGlobal ? '(global prompts are always reusable)' : '(stays active after use)'}
-            </span>
-          </label>
+          {/* Reusable checkbox (hidden for notes — they can't be reusable) */}
+          {!isNote && (
+            <label className={`flex items-center gap-2 ${isGlobal ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
+              <input
+                type="checkbox"
+                checked={reusable}
+                onChange={(e) => setReusable(e.target.checked)}
+                disabled={isGlobal}
+                className="w-4 h-4 rounded border-app-border bg-app-surface text-app-accent focus:ring-app-accent disabled:cursor-not-allowed"
+              />
+              <span className="text-sm text-app-text">Reusable</span>
+              <span className="text-xs text-app-text-muted">
+                {isGlobal ? '(global prompts are always reusable)' : '(stays active after use)'}
+              </span>
+            </label>
+          )}
         </div>
       </div>
 

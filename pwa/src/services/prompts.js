@@ -6,6 +6,7 @@
 import {
   collection,
   doc,
+  setDoc,
   getDocs,
   getDoc,
   addDoc,
@@ -16,6 +17,7 @@ import {
   orderBy,
   onSnapshot,
   serverTimestamp,
+  Timestamp,
   writeBatch
 } from 'firebase/firestore';
 import { db, isConfigured } from './firebase';
@@ -106,25 +108,31 @@ export async function createPrompt(userId, promptData) {
   }
 
   try {
-    const docRef = await addDoc(collection(db, PROMPTS_COLLECTION), {
+    const promptId = `prompt-${crypto.randomUUID()}`;
+    const now = Date.now();
+    const type = promptData.type === 'note' ? 'note' : 'prompt';
+    const isNote = type === 'note';
+    const docRef = doc(db, PROMPTS_COLLECTION, promptId);
+    await setDoc(docRef, {
       userId,
+      type,
       title: promptData.title || '',
       prompt: promptData.prompt || '',
       labels: promptData.labels || [],
       images: promptData.images || [],
       isFavorite: promptData.isFavorite || false,
-      reusable: promptData.reusable || false,
-      done: promptData.done || false,
-      testing: promptData.testing || false,
+      reusable: isNote ? false : (promptData.reusable || false),
+      done: isNote ? false : (promptData.done || false),
+      testing: isNote ? false : (promptData.testing || false),
       scope: promptData.scope || 'project',
       projectId: promptData.projectId || null,
       projectPath: promptData.projectPath || null,
       order: promptData.order || 0,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
+      createdAt: Timestamp.fromMillis(now),
+      updatedAt: Timestamp.fromMillis(now)
     });
 
-    return { success: true, id: docRef.id };
+    return { success: true, id: promptId };
   } catch (error) {
     console.error('Error creating prompt:', error);
     return { success: false, error: error.message };
@@ -134,7 +142,7 @@ export async function createPrompt(userId, promptData) {
 // Allowed fields for prompt updates (security: prevent userId injection)
 const ALLOWED_UPDATE_FIELDS = [
   'title', 'prompt', 'labels', 'images', 'isFavorite',
-  'reusable', 'done', 'testing', 'scope', 'order', 'projectId', 'projectPath'
+  'reusable', 'done', 'testing', 'scope', 'order', 'projectId', 'projectPath', 'type'
 ];
 
 /**
@@ -155,6 +163,14 @@ export async function updatePrompt(promptId, updates) {
       if (key in updates) {
         safeUpdates[key] = updates[key];
       }
+    }
+
+    // Notes can't carry prompt-lifecycle state. When an update converts to 'note',
+    // force-strip those flags so the Firestore doc stays consistent.
+    if (safeUpdates.type === 'note') {
+      safeUpdates.reusable = false;
+      safeUpdates.done = false;
+      safeUpdates.testing = false;
     }
 
     const docRef = doc(db, PROMPTS_COLLECTION, promptId);
@@ -184,6 +200,46 @@ export async function deletePrompt(promptId) {
     return { success: true };
   } catch (error) {
     console.error('Error deleting prompt:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Duplicate a prompt. Matches desktop behaviour: "(copy)" title suffix,
+ * reset done/testing, no image copy (avoid shared references).
+ */
+export async function duplicatePrompt(userId, prompt, orderFallback = 0) {
+  if (!isConfigured) {
+    return { success: false, error: 'Firebase not configured' };
+  }
+  try {
+    const newId = `prompt-${crypto.randomUUID()}`;
+    const now = Date.now();
+    const title = prompt.title ? `${prompt.title} (copy)` : '';
+    const type = prompt.type === 'note' ? 'note' : 'prompt';
+    const isNote = type === 'note';
+    const docRef = doc(db, PROMPTS_COLLECTION, newId);
+    await setDoc(docRef, {
+      userId,
+      type,
+      title,
+      prompt: prompt.prompt || '',
+      labels: Array.isArray(prompt.labels) ? [...prompt.labels] : [],
+      images: [],
+      isFavorite: false,
+      reusable: isNote ? false : (prompt.reusable || false),
+      done: false,
+      testing: false,
+      scope: prompt.scope || 'project',
+      projectId: prompt.projectId || null,
+      projectPath: prompt.projectPath || null,
+      order: typeof prompt.order === 'number' ? prompt.order + 0.5 : orderFallback,
+      createdAt: Timestamp.fromMillis(now),
+      updatedAt: Timestamp.fromMillis(now)
+    });
+    return { success: true, id: newId };
+  } catch (error) {
+    console.error('Error duplicating prompt:', error);
     return { success: false, error: error.message };
   }
 }

@@ -6,6 +6,7 @@
 import { useState, useMemo, useCallback } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { usePrompts } from '../hooks/usePrompts';
+import { useLabels } from '../hooks/useLabels';
 import Header from '../components/Header';
 import PromptCard from '../components/PromptCard';
 import PromptModal from '../components/PromptModal';
@@ -62,14 +63,32 @@ export default function HomePage() {
     createPrompt,
     updatePrompt,
     deletePrompt,
+    duplicatePrompt,
+    convertType,
     toggleFavorite,
     markAsDone,
     markAsTesting,
     restorePrompt
-  } = usePrompts(showGlobal ? '__global__' : selectedProject);
+  } = usePrompts(showGlobal ? (user ? `${user.uid}_global` : null) : selectedProject);
 
-  const { reusable, regular, testing, done } = organizedPrompts();
-  const allLabels = getAllLabels();
+  const { labels: registeredLabels, labelColors, ensureLabels } = useLabels();
+
+  const { notes, reusable, regular, testing, done } = organizedPrompts();
+
+  // Notes section collapsed state (persisted per browser)
+  const [notesCollapsed, setNotesCollapsedState] = useState(() => {
+    try { return localStorage.getItem('notesCollapsed') === '1'; } catch { return false; }
+  });
+  const setNotesCollapsed = useCallback((val) => {
+    setNotesCollapsedState(val);
+    try { localStorage.setItem('notesCollapsed', val ? '1' : '0'); } catch {}
+  }, []);
+  // Union of labels derived from prompts and the synced registry
+  const promptLabels = getAllLabels();
+  const allLabels = useMemo(() => {
+    const set = new Set([...promptLabels, ...registeredLabels]);
+    return Array.from(set).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+  }, [promptLabels, registeredLabels]);
 
   // Filter prompts by search and label
   const filterPrompts = (promptList) => {
@@ -91,13 +110,14 @@ export default function HomePage() {
     });
   };
 
+  const filteredNotes = filterPrompts(notes);
   const filteredReusable = filterPrompts(reusable);
   const filteredRegular = filterPrompts(regular);
   const filteredTesting = filterPrompts(testing);
   const filteredDone = filterPrompts(done);
 
   const hasPrompts = prompts.length > 0;
-  const hasFilteredPrompts = filteredReusable.length + filteredRegular.length + filteredTesting.length + filteredDone.length > 0;
+  const hasFilteredPrompts = filteredNotes.length + filteredReusable.length + filteredRegular.length + filteredTesting.length + filteredDone.length > 0;
 
   const handleNewPrompt = () => {
     setEditingPrompt(null);
@@ -114,6 +134,9 @@ export default function HomePage() {
       await updatePrompt(editingPrompt.id, promptData);
     } else {
       await createPrompt(promptData);
+    }
+    if (promptData.labels?.length) {
+      ensureLabels(promptData.labels);
     }
     setShowModal(false);
     setEditingPrompt(null);
@@ -199,6 +222,35 @@ export default function HomePage() {
           </div>
         ) : (
           <div className="space-y-6">
+            {/* Notes Section (collapsible) */}
+            {filteredNotes.length > 0 && (
+              <section>
+                <button
+                  onClick={() => setNotesCollapsed(!notesCollapsed)}
+                  className="w-full flex items-center gap-2 text-sm font-medium text-sky-400 mb-3 hover:opacity-80 transition-opacity"
+                >
+                  <span className="text-xs">{notesCollapsed ? '▶' : '▼'}</span>
+                  <span>NOTES ({filteredNotes.length})</span>
+                </button>
+                {!notesCollapsed && (
+                  <div className="space-y-2">
+                    {filteredNotes.map(prompt => (
+                      <PromptCard
+                        key={prompt.id}
+                        prompt={prompt}
+                        labelColors={labelColors}
+                        onEdit={() => handleEdit(prompt)}
+                        onDelete={() => handleDelete(prompt.id)}
+                        onDuplicate={() => duplicatePrompt(prompt.id)}
+                        onConvertType={() => convertType(prompt.id)}
+                        onToggleFavorite={() => toggleFavorite(prompt.id)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </section>
+            )}
+
             {/* Reusable Section */}
             {filteredReusable.length > 0 && (
               <section>
@@ -211,8 +263,10 @@ export default function HomePage() {
                       key={prompt.id}
                       prompt={prompt}
                       compact
+                      labelColors={labelColors}
                       onEdit={() => handleEdit(prompt)}
                       onDelete={() => handleDelete(prompt.id)}
+                      onDuplicate={() => duplicatePrompt(prompt.id)}
                       onToggleFavorite={() => toggleFavorite(prompt.id)}
                     />
                   ))}
@@ -231,8 +285,11 @@ export default function HomePage() {
                     <PromptCard
                       key={prompt.id}
                       prompt={prompt}
+                      labelColors={labelColors}
                       onEdit={() => handleEdit(prompt)}
                       onDelete={() => handleDelete(prompt.id)}
+                      onDuplicate={() => duplicatePrompt(prompt.id)}
+                      onConvertType={() => convertType(prompt.id)}
                       onToggleFavorite={() => toggleFavorite(prompt.id)}
                       onMarkDone={() => markAsDone(prompt.id)}
                       onMarkTesting={() => markAsTesting(prompt.id)}
@@ -253,8 +310,10 @@ export default function HomePage() {
                     <PromptCard
                       key={prompt.id}
                       prompt={prompt}
+                      labelColors={labelColors}
                       onEdit={() => handleEdit(prompt)}
                       onDelete={() => handleDelete(prompt.id)}
+                      onDuplicate={() => duplicatePrompt(prompt.id)}
                       onToggleFavorite={() => toggleFavorite(prompt.id)}
                       onMarkDone={() => markAsDone(prompt.id)}
                       onRestore={() => restorePrompt(prompt.id)}
@@ -275,8 +334,10 @@ export default function HomePage() {
                     <PromptCard
                       key={prompt.id}
                       prompt={prompt}
+                      labelColors={labelColors}
                       onEdit={() => handleEdit(prompt)}
                       onDelete={() => handleDelete(prompt.id)}
+                      onDuplicate={() => duplicatePrompt(prompt.id)}
                       onRestore={() => restorePrompt(prompt.id)}
                     />
                   ))}
@@ -303,6 +364,7 @@ export default function HomePage() {
         <PromptModal
           prompt={editingPrompt}
           allLabels={allLabels}
+          labelColors={labelColors}
           onSave={handleSave}
           onClose={() => {
             setShowModal(false);

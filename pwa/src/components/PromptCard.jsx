@@ -4,33 +4,8 @@
  */
 
 import { useState } from 'react';
-
-// Label colors matching design-tokens.js
-const LABEL_COLORS = [
-  { bg: '#6366f1', text: '#ffffff' },  // Indigo
-  { bg: '#8b5cf6', text: '#ffffff' },  // Violet
-  { bg: '#d946ef', text: '#ffffff' },  // Fuchsia
-  { bg: '#ec4899', text: '#ffffff' },  // Pink
-  { bg: '#f43f5e', text: '#ffffff' },  // Rose
-  { bg: '#ef4444', text: '#ffffff' },  // Red
-  { bg: '#f97316', text: '#ffffff' },  // Orange
-  { bg: '#eab308', text: '#1a1a20' },  // Yellow (dark text)
-  { bg: '#22c55e', text: '#ffffff' },  // Green
-  { bg: '#14b8a6', text: '#ffffff' },  // Teal
-  { bg: '#06b6d4', text: '#1a1a20' },  // Cyan (dark text)
-  { bg: '#3b82f6', text: '#ffffff' },  // Blue
-];
-
-// Generate a deterministic color index from label name
-function getLabelColorIndex(label) {
-  let hash = 0;
-  for (let i = 0; i < label.length; i++) {
-    const char = label.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32-bit integer
-  }
-  return Math.abs(hash) % LABEL_COLORS.length;
-}
+import ImageThumbnail from './ImageThumbnail';
+import { LABEL_COLORS, resolveLabelColor } from '../utils/labelColors';
 
 // Globe icon for global scope
 const GlobeIcon = () => (
@@ -51,14 +26,18 @@ const FolderIcon = () => (
 export default function PromptCard({
   prompt,
   compact,
+  labelColors,
   onEdit,
   onDelete,
+  onDuplicate,
+  onConvertType,
   onToggleFavorite,
   onMarkDone,
   onMarkTesting,
   onRestore
 }) {
   const [showActions, setShowActions] = useState(false);
+  const isNote = prompt.type === 'note';
 
   // Truncate prompt text for preview
   const previewText = prompt.prompt?.length > 100
@@ -93,7 +72,16 @@ export default function PromptCard({
             {/* Inline badges */}
             {prompt.isFavorite && <span className="text-yellow-400 text-xs">★</span>}
             {prompt.images?.length > 0 && (
-              <span className="text-app-text-muted text-xs">📷{prompt.images.length}</span>
+              <span className="flex items-center gap-1 flex-shrink-0">
+                <ImageThumbnail
+                  imageId={prompt.images[0].id}
+                  filename={prompt.images[0].filename}
+                  size={20}
+                />
+                {prompt.images.length > 1 && (
+                  <span className="text-app-text-muted text-xs">+{prompt.images.length - 1}</span>
+                )}
+              </span>
             )}
           </div>
 
@@ -151,7 +139,9 @@ export default function PromptCard({
   // Standard layout for non-reusable prompts
   return (
     <div
-      className="bg-app-surface border border-app-border rounded-lg p-4 hover:border-app-accent/50 transition-colors"
+      className={`bg-app-surface border border-app-border rounded-lg p-4 hover:border-app-accent/50 transition-colors ${
+        isNote ? 'border-l-4 border-l-sky-500' : ''
+      }`}
       onClick={() => onEdit()}
     >
       {/* Header */}
@@ -163,7 +153,9 @@ export default function PromptCard({
               {prompt.title}
             </h3>
           )}
-          <p className="text-sm text-app-text-muted line-clamp-2 whitespace-pre-wrap">
+          <p className={`text-sm text-app-text-muted ${
+            isNote ? 'truncate' : 'line-clamp-2 whitespace-pre-wrap'
+          }`}>
             {previewText || 'No content'}
           </p>
         </div>
@@ -211,7 +203,8 @@ export default function PromptCard({
                     ✏️ Edit
                   </button>
 
-                  {onMarkTesting && !prompt.testing && !prompt.done && (
+                  {/* Lifecycle actions only apply to prompts, not notes */}
+                  {!isNote && onMarkTesting && !prompt.testing && !prompt.done && (
                     <button
                       onClick={() => {
                         onMarkTesting();
@@ -223,7 +216,7 @@ export default function PromptCard({
                     </button>
                   )}
 
-                  {onMarkDone && !prompt.done && (
+                  {!isNote && onMarkDone && !prompt.done && (
                     <button
                       onClick={() => {
                         onMarkDone();
@@ -235,7 +228,7 @@ export default function PromptCard({
                     </button>
                   )}
 
-                  {onRestore && (prompt.done || prompt.testing) && (
+                  {!isNote && onRestore && (prompt.done || prompt.testing) && (
                     <button
                       onClick={() => {
                         onRestore();
@@ -244,6 +237,24 @@ export default function PromptCard({
                       className="w-full px-4 py-2.5 text-left text-sm text-app-text hover:bg-app-bg transition-colors"
                     >
                       ↩️ Restore
+                    </button>
+                  )}
+
+                  {onDuplicate && (
+                    <button
+                      onClick={() => { onDuplicate(); setShowActions(false); }}
+                      className="w-full px-4 py-2.5 text-left text-sm text-app-text hover:bg-app-bg transition-colors"
+                    >
+                      ⎘ Duplicate
+                    </button>
+                  )}
+
+                  {onConvertType && (
+                    <button
+                      onClick={() => { onConvertType(); setShowActions(false); }}
+                      className="w-full px-4 py-2.5 text-left text-sm text-app-text hover:bg-app-bg transition-colors"
+                    >
+                      ↔ {isNote ? 'Convert to Prompt' : 'Convert to Note'}
                     </button>
                   )}
 
@@ -269,8 +280,7 @@ export default function PromptCard({
       {prompt.labels?.length > 0 && (
         <div className="flex gap-1.5 mt-3 flex-wrap">
           {prompt.labels.map(label => {
-            const colorIndex = getLabelColorIndex(label);
-            const colors = LABEL_COLORS[colorIndex];
+            const colors = resolveLabelColor(label, labelColors);
             return (
               <span
                 key={label}
@@ -284,11 +294,22 @@ export default function PromptCard({
         </div>
       )}
 
-      {/* Images indicator */}
+      {/* Image thumbnail strip */}
       {prompt.images?.length > 0 && (
-        <div className="flex items-center gap-1 mt-2 text-xs text-app-text-muted">
-          <span>📷</span>
-          <span>{prompt.images.length} image{prompt.images.length > 1 ? 's' : ''}</span>
+        <div className="flex gap-1.5 mt-3 flex-wrap">
+          {prompt.images.slice(0, 5).map(img => (
+            <ImageThumbnail
+              key={img.id}
+              imageId={img.id}
+              filename={img.filename}
+              size={44}
+            />
+          ))}
+          {prompt.images.length > 5 && (
+            <span className="text-xs text-app-text-muted self-center">
+              +{prompt.images.length - 5} more
+            </span>
+          )}
         </div>
       )}
     </div>

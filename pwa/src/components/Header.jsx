@@ -31,7 +31,7 @@ export default function Header({ user, searchQuery, onSearchChange }) {
     <header className="px-4 py-3 border-b border-app-border bg-app-surface flex items-center gap-4" style={{ paddingTop: 'max(12px, var(--sat))' }}>
       {/* Logo / Title */}
       <h1 className="text-lg font-semibold text-app-text flex-shrink-0">
-        📝 Prompts
+        📚 Library
       </h1>
 
       {/* Search */}
@@ -41,7 +41,7 @@ export default function Header({ user, searchQuery, onSearchChange }) {
             type="search"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Search prompts..."
+            placeholder="Search..."
             className="w-full px-4 py-2 pl-10 bg-app-bg border border-app-border rounded-lg text-app-text placeholder-app-text-muted focus:outline-none focus:border-app-accent transition-colors text-sm"
           />
           <svg

@@ -152,9 +152,9 @@ class ViewManager {
   _handleHookEvent(event) {
     const { type, cwd, sessionId } = event;
 
-    // Resolve the tab ID. Prefer a cached sessionId binding so multiple tabs
-    // in the same cwd stay independent.
-    const tabId = this._getTabIdForHookEvent(sessionId, cwd);
+    // Resolve the tab ID. Events from our own terminals carry it directly;
+    // otherwise fall back to sessionId binding / cwd matching.
+    const tabId = this._getTabIdForHookEvent(sessionId, cwd, event.tabId);
     if (!tabId) {
       console.warn('[ViewManager] Hook event for unknown cwd:', cwd);
       return;
@@ -253,10 +253,19 @@ class ViewManager {
       if (normalizedCwd === normalizedTabCwd) {
         exact.push(tabId);
       } else if (normalizedCwd.startsWith(normalizedTabCwd + '/')) {
-        subdir.push(tabId);
+        subdir.push({ tabId, depth: normalizedTabCwd.length });
       }
     }
-    return [...exact, ...subdir];
+
+    // Deeper tab cwds are more specific parents of the event cwd; among equals
+    // (and among exact matches) prefer the active tab over creation order.
+    const activeFirst = (a, b) =>
+      (b === this.activeTabId) - (a === this.activeTabId);
+    exact.sort(activeFirst);
+    subdir.sort((a, b) =>
+      (b.depth - a.depth) || activeFirst(a.tabId, b.tabId));
+
+    return [...exact, ...subdir.map(s => s.tabId)];
   }
 
   /**
@@ -270,11 +279,19 @@ class ViewManager {
   }
 
   /**
-   * Resolve the tab a hook event belongs to, using the Claude Code sessionId
-   * to keep multiple tabs in the same cwd independent.
+   * Resolve the tab a hook event belongs to. Events from our own terminals
+   * carry the tab ID directly (CROSSAI_TAB_ID env var forwarded by the hook
+   * command); the sessionId binding and cwd heuristic only cover Claude Code
+   * sessions started outside the app.
    * @private
    */
-  _getTabIdForHookEvent(sessionId, cwd) {
+  _getTabIdForHookEvent(sessionId, cwd, eventTabId) {
+    // Exact attribution: the event tells us which terminal it came from.
+    if (eventTabId && this.terminalViews.has(eventTabId)) {
+      if (sessionId) this._bindHookSession(sessionId, eventTabId);
+      return eventTabId;
+    }
+
     if (sessionId && this.hookSessionToTab.has(sessionId)) {
       const cached = this.hookSessionToTab.get(sessionId);
       // Drop the binding if the tab has gone away.
@@ -293,16 +310,35 @@ class ViewManager {
     });
     if (!chosen) chosen = candidates[0]; // fall back: ambiguous, keep prior behavior
 
-    if (sessionId) {
-      // Evict any stale binding on this tab so it points at the active session.
-      const oldSession = this.hookTabToSession.get(chosen);
-      if (oldSession && oldSession !== sessionId) {
-        this.hookSessionToTab.delete(oldSession);
-      }
-      this.hookSessionToTab.set(sessionId, chosen);
-      this.hookTabToSession.set(chosen, sessionId);
-    }
+    if (sessionId) this._bindHookSession(sessionId, chosen);
     return chosen;
+  }
+
+  /**
+   * Bind a Claude Code sessionId to a tab, evicting any stale binding.
+   * @private
+   */
+  _bindHookSession(sessionId, tabId) {
+    const oldSession = this.hookTabToSession.get(tabId);
+    if (oldSession && oldSession !== sessionId) {
+      this.hookSessionToTab.delete(oldSession);
+    }
+    this.hookSessionToTab.set(sessionId, tabId);
+    this.hookTabToSession.set(tabId, sessionId);
+  }
+
+  /**
+   * Drop the hook session binding for a tab (Claude exited or restarted in it,
+   * or the tab closed). Without this, the dead session keeps the tab "taken"
+   * and its next session gets misrouted to another tab.
+   * @private
+   */
+  _clearHookSessionBinding(tabId) {
+    const boundSession = this.hookTabToSession.get(tabId);
+    if (boundSession) {
+      this.hookSessionToTab.delete(boundSession);
+      this.hookTabToSession.delete(tabId);
+    }
   }
 
   /**
@@ -799,8 +835,10 @@ class ViewManager {
       ? ['-Command', claudeCmd]
       : ['-l', '-i', '-c', claudeCmd];
 
-    // Build environment with common PATH additions for CLI tools
-    const env = { ...process.env, TERM: 'xterm-256color' };
+    // Build environment with common PATH additions for CLI tools.
+    // CROSSAI_TAB_ID lets the Claude Code hook command report exactly which
+    // terminal tab an event came from (forwarded as an HTTP header).
+    const env = { ...process.env, TERM: 'xterm-256color', CROSSAI_TAB_ID: tabId };
     if (process.platform !== 'win32') {
       // Ensure common CLI tool directories are in PATH
       const homedir = os.homedir();
@@ -942,6 +980,7 @@ class ViewManager {
     // Clear streaming/subagent state (fallback when PTY dies without Stop hook)
     this._clearStreamingTimeout(tabId);
     this.subagentDepth.delete(tabId);
+    this._clearHookSessionBinding(tabId);
     this._sendStreamingState(tabId, false, null);
 
     // Notify sidebar that terminal stopped
@@ -1515,6 +1554,7 @@ class ViewManager {
     // Clear streaming/subagent state before restart
     this._clearStreamingTimeout(tabId);
     this.subagentDepth.delete(tabId);
+    this._clearHookSessionBinding(tabId);
     this._sendStreamingState(tabId, false, null);
 
     // Clear and restart
@@ -1551,6 +1591,7 @@ class ViewManager {
     // Clear streaming/subagent state
     this._clearStreamingTimeout(tabId);
     this.subagentDepth.delete(tabId);
+    this._clearHookSessionBinding(tabId);
 
     // Send shutdown message to terminal view
     const view = this.terminalViews.get(tabId);
@@ -1583,6 +1624,7 @@ class ViewManager {
     // Clear streaming/subagent state before resume
     this._clearStreamingTimeout(tabId);
     this.subagentDepth.delete(tabId);
+    this._clearHookSessionBinding(tabId);
     this._sendStreamingState(tabId, false, null);
 
     view.webContents.send('terminal-data', '\x1b[2J\x1b[H');
@@ -1787,11 +1829,7 @@ class ViewManager {
     this.subagentDepth.delete(tabId);
 
     // Drop any hook session binding pointing at this tab
-    const boundSession = this.hookTabToSession.get(tabId);
-    if (boundSession) {
-      this.hookSessionToTab.delete(boundSession);
-      this.hookTabToSession.delete(tabId);
-    }
+    this._clearHookSessionBinding(tabId);
 
     // Stop usage polling if no terminal views remain
     if (this.terminalViews.size === 0) {
@@ -1947,6 +1985,8 @@ class ViewManager {
     this.terminalPromptState.clear();
     this.streamingTimeouts.clear();
     this.subagentDepth.clear();
+    this.hookSessionToTab.clear();
+    this.hookTabToSession.clear();
   }
 
   /**

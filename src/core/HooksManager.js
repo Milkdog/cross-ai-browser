@@ -128,7 +128,7 @@ class HooksManager extends EventEmitter {
       cleanup();
       try {
         const data = JSON.parse(body);
-        this._processHookEvent(data, res);
+        this._processHookEvent(data, res, req.headers['x-crossai-tab-id']);
       } catch (err) {
         console.error('[HooksManager] Invalid JSON:', err.message);
         res.statusCode = 400;
@@ -154,7 +154,7 @@ class HooksManager extends EventEmitter {
    * Process a hook event from Claude Code
    * @private
    */
-  _processHookEvent(data, res) {
+  _processHookEvent(data, res, tabIdHeader) {
     const hookType = data.hook_event_name;
 
     // Validate hook type
@@ -165,11 +165,18 @@ class HooksManager extends EventEmitter {
       return;
     }
 
+    // Tab ID forwarded by the hook command from the terminal's CROSSAI_TAB_ID
+    // env var. Blank/absent for Claude Code sessions started outside the app.
+    const tabId = typeof tabIdHeader === 'string' && /^[\w-]{1,64}$/.test(tabIdHeader.trim())
+      ? tabIdHeader.trim()
+      : undefined;
+
     // Extract relevant data based on hook type
     const eventData = {
       type: hookType,
       sessionId: data.session_id,
       cwd: data.cwd,
+      tabId,
       transcriptPath: data.transcript_path,
       timestamp: Date.now()
     };
@@ -230,11 +237,14 @@ class HooksManager extends EventEmitter {
           return false;
         }
 
-        // Check if any hook command includes our server URL
+        // Check if any hook command includes our server URL and the current
+        // command shape (tab ID header) — otherwise reinstall to upgrade it
         const hasOurHook = hookConfig.some(entry => {
           if (!entry.hooks || !Array.isArray(entry.hooks)) return false;
           return entry.hooks.some(h =>
-            h.type === 'command' && h.command && h.command.includes(`127.0.0.1:${this.port}`)
+            h.type === 'command' && h.command &&
+            h.command.includes(`127.0.0.1:${this.port}`) &&
+            h.command.includes('X-CrossAI-Tab-Id')
           );
         });
 
@@ -269,7 +279,11 @@ class HooksManager extends EventEmitter {
       settings.hooks = settings.hooks || {};
 
       const serverUrl = this.getServerUrl();
-      const curlCommand = `curl -s --max-time 2 -X POST ${serverUrl} -H 'Content-Type: application/json' -d @-`;
+      // CROSSAI_TAB_ID is set in the env of terminals we spawn (ViewManager),
+      // and hook commands run as shell children of that terminal, so the
+      // expansion identifies the exact tab. For sessions outside the app the
+      // var is unset, the header value is blank, and curl drops the header.
+      const curlCommand = `curl -s --max-time 2 -X POST ${serverUrl} -H 'Content-Type: application/json' -H "X-CrossAI-Tab-Id: $CROSSAI_TAB_ID" -d @-`;
 
       for (const hookType of SUPPORTED_HOOKS) {
         // Create or update the hook config

@@ -147,7 +147,7 @@ function clearTabBadges(tabId) {
 }
 
 // Note: Terminal hook completion is now handled entirely through ViewManager's
-// onTerminalComplete callback, which handles Stop, Notification, and TaskCompleted events
+// onTerminalComplete callback, which handles Stop and Notification events
 
 function createWindow() {
   mainWindow = new BrowserWindow({

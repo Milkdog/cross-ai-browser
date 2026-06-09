@@ -21,6 +21,13 @@ const {
   Timestamp
 } = require('firebase/firestore');
 const {
+  getStorage,
+  ref: storageRef,
+  uploadBytes,
+  getBytes,
+  deleteObject
+} = require('firebase/storage');
+const {
   getAuth,
   signInWithEmailAndPassword,
   onAuthStateChanged
@@ -33,6 +40,7 @@ const path = require('path');
 
 const PROMPTS_COLLECTION = 'prompts';
 const PROJECTS_COLLECTION = 'projects';
+const USER_LABELS_COLLECTION = 'userLabels';
 
 class FirebaseSyncAdapter extends EventEmitter {
   /**
@@ -41,19 +49,29 @@ class FirebaseSyncAdapter extends EventEmitter {
    * @param {Object} options.promptLibraryManager - PromptLibraryManager instance
    * @param {string} options.userDataPath - Electron app.getPath('userData')
    */
-  constructor({ store, promptLibraryManager, userDataPath }) {
+  constructor({ store, promptLibraryManager, promptImageManager, userDataPath }) {
     super();
     this.store = store;
     this.promptLibraryManager = promptLibraryManager;
+    this.promptImageManager = promptImageManager || null;
     this.userDataPath = userDataPath;
     this.promptsDir = path.join(userDataPath, 'prompts');
     this.app = null;
     this.db = null;
     this.auth = null;
+    this.storage = null;
     this.user = null;
     this.unsubscribers = [];
     this.syncEnabled = false;
     this.isSyncing = false;
+    this._pendingImageDownloads = new Set();
+  }
+
+  /**
+   * Set the PromptImageManager after construction (for late wiring from main.js)
+   */
+  setPromptImageManager(promptImageManager) {
+    this.promptImageManager = promptImageManager;
   }
 
   /**
@@ -70,6 +88,12 @@ class FirebaseSyncAdapter extends EventEmitter {
       this.app = initializeApp(config, 'prompt-sync');
       this.db = getFirestore(this.app);
       this.auth = getAuth(this.app);
+      try {
+        this.storage = getStorage(this.app);
+      } catch (err) {
+        console.warn('[FirebaseSyncAdapter] Storage init failed (image sync disabled):', err.message);
+        this.storage = null;
+      }
 
       // Listen for auth state changes
       onAuthStateChanged(this.auth, (user) => {
@@ -419,6 +443,7 @@ class FirebaseSyncAdapter extends EventEmitter {
     });
 
     this.unsubscribers.push(unsubscribe);
+    this._startLabelsRealtimeSync();
     console.log('[FirebaseSyncAdapter] Real-time sync started for user:', this.user?.email);
   }
 
@@ -473,20 +498,39 @@ class FirebaseSyncAdapter extends EventEmitter {
    * Upload a prompt to Firestore
    * @private
    */
-  async _uploadPrompt(projectId, prompt) {
+  async _uploadPrompt(projectId, prompt, cwd) {
     const promptRef = doc(this.db, PROMPTS_COLLECTION, prompt.id);
+
+    // Strip local filesystem paths from image metadata before upload.
+    // `path` and `thumbnailPath` are device-local and meaningless to other clients.
+    const remoteImages = (prompt.images || []).map(img => ({
+      id: img.id,
+      filename: img.filename,
+      size: img.size,
+      width: img.width,
+      height: img.height,
+      addedAt: img.addedAt
+    }));
+
+    const isGlobal = prompt.scope === 'global';
+    const projectPath = isGlobal ? null : (cwd || null);
+
+    const type = prompt.type === 'note' ? 'note' : 'prompt';
+    const isNote = type === 'note';
 
     await setDoc(promptRef, {
       userId: this.user.uid,
       projectId,
+      projectPath,
+      type,
       title: prompt.title || '',
       prompt: prompt.prompt || '',
       labels: prompt.labels || [],
-      images: prompt.images || [],
+      images: remoteImages,
       isFavorite: prompt.isFavorite || false,
-      reusable: prompt.reusable || false,
-      done: prompt.done || false,
-      testing: prompt.testing || false,
+      reusable: isNote ? false : (prompt.reusable || false),
+      done: isNote ? false : (prompt.done || false),
+      testing: isNote ? false : (prompt.testing || false),
       scope: prompt.scope || 'project',
       order: prompt.order || 0,
       createdAt: prompt.createdAt ? Timestamp.fromMillis(prompt.createdAt) : serverTimestamp(),
@@ -525,11 +569,219 @@ class FirebaseSyncAdapter extends EventEmitter {
         projectId = await this._ensureProject(cwd);
       }
 
-      await this._uploadPrompt(projectId, prompt);
+      // Best-effort: upload any images missing from Storage before writing metadata.
+      await this._uploadImagesForPrompt(prompt);
+
+      await this._uploadPrompt(projectId, prompt, cwd);
       console.log('[FirebaseSyncAdapter] Pushed prompt to Firebase:', prompt.id);
     } catch (err) {
       console.error('[FirebaseSyncAdapter] Failed to push prompt:', err.message);
     }
+  }
+
+  // --- Image Storage sync ---
+
+  /**
+   * @private Get the set of image IDs already uploaded (persisted in store).
+   */
+  _getSyncedImages() {
+    return new Set(this.store.get('firebase.syncedImages', []));
+  }
+
+  /**
+   * @private Persist the synced-images set.
+   */
+  _saveSyncedImages(set) {
+    this.store.set('firebase.syncedImages', Array.from(set));
+  }
+
+  /**
+   * Upload a single image (original + thumb) to Firebase Storage.
+   * Silently succeeds if already uploaded.
+   * @private
+   */
+  async _uploadImageToStorage(image) {
+    if (!this.storage || !this.user) return { success: false, error: 'Storage unavailable' };
+    if (!image || !image.id) return { success: false, error: 'Invalid image' };
+
+    const synced = this._getSyncedImages();
+    if (synced.has(image.id)) return { success: true, skipped: true };
+
+    const originalPath = image.path;
+    const thumbPath = image.thumbnailPath;
+    if (!originalPath || !fs.existsSync(originalPath)) {
+      return { success: false, error: 'Local file missing' };
+    }
+
+    try {
+      const bytes = fs.readFileSync(originalPath);
+      const ext = (path.extname(originalPath) || '.png').toLowerCase();
+      const contentType = _extToMime(ext);
+      const origRef = storageRef(this.storage, `users/${this.user.uid}/images/${image.id}`);
+      await uploadBytes(origRef, bytes, { contentType });
+
+      // Thumbnail (optional — skip if missing)
+      if (thumbPath && fs.existsSync(thumbPath)) {
+        const thumbBytes = fs.readFileSync(thumbPath);
+        const thumbRef = storageRef(this.storage, `users/${this.user.uid}/images/${image.id}_thumb`);
+        await uploadBytes(thumbRef, thumbBytes, { contentType: 'image/png' });
+      }
+
+      synced.add(image.id);
+      this._saveSyncedImages(synced);
+      return { success: true };
+    } catch (err) {
+      console.warn('[FirebaseSyncAdapter] Image upload failed:', image.id, err.message);
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
+   * Upload all images attached to a prompt that haven't been synced yet.
+   * @private
+   */
+  async _uploadImagesForPrompt(prompt) {
+    if (!this.storage || !prompt.images || prompt.images.length === 0) return;
+    for (const img of prompt.images) {
+      // eslint-disable-next-line no-await-in-loop -- intentional serial upload to keep network polite
+      await this._uploadImageToStorage(img);
+    }
+  }
+
+  /**
+   * Download an image (original + thumb) from Storage to local disk.
+   * @param {string} imageId
+   * @param {string} filename - Original filename (for extension inference)
+   * @returns {Promise<{success: boolean, error?: string}>}
+   */
+  async downloadImageFromStorage(imageId, filename) {
+    if (!this.storage || !this.user || !this.promptImageManager) {
+      return { success: false, error: 'Not ready for downloads' };
+    }
+    if (this._pendingImageDownloads.has(imageId)) {
+      return { success: false, error: 'Already downloading' };
+    }
+    if (this.promptImageManager.hasLocalImage(imageId)) {
+      return { success: true, skipped: true };
+    }
+
+    this._pendingImageDownloads.add(imageId);
+    try {
+      const origRef = storageRef(this.storage, `users/${this.user.uid}/images/${imageId}`);
+      const buf = Buffer.from(await getBytes(origRef));
+      const ext = (filename && path.extname(filename)) || '.png';
+      const writeResult = this.promptImageManager.writeFromBuffer(imageId, buf, ext);
+      if (!writeResult.success) return writeResult;
+
+      // Try to fetch thumbnail; regenerate locally if missing.
+      try {
+        const thumbRef = storageRef(this.storage, `users/${this.user.uid}/images/${imageId}_thumb`);
+        const thumbBuf = Buffer.from(await getBytes(thumbRef));
+        this.promptImageManager.writeThumbnailFromBuffer(imageId, thumbBuf);
+      } catch {
+        await this.promptImageManager.regenerateThumbnail(imageId);
+      }
+
+      // Mark as synced so we don't re-upload on next push.
+      const synced = this._getSyncedImages();
+      synced.add(imageId);
+      this._saveSyncedImages(synced);
+
+      this.emit('image-downloaded', { imageId });
+      return { success: true };
+    } catch (err) {
+      console.warn('[FirebaseSyncAdapter] Image download failed:', imageId, err.message);
+      return { success: false, error: err.message };
+    } finally {
+      this._pendingImageDownloads.delete(imageId);
+    }
+  }
+
+  /**
+   * Delete an image from Firebase Storage (original + thumb).
+   * Swallows not-found errors.
+   */
+  async deleteImageFromStorage(imageId) {
+    if (!this.storage || !this.user) return { success: false };
+    const results = await Promise.allSettled([
+      deleteObject(storageRef(this.storage, `users/${this.user.uid}/images/${imageId}`)),
+      deleteObject(storageRef(this.storage, `users/${this.user.uid}/images/${imageId}_thumb`))
+    ]);
+    // Clean local tracking regardless.
+    const synced = this._getSyncedImages();
+    if (synced.delete(imageId)) this._saveSyncedImages(synced);
+    const errors = results
+      .filter(r => r.status === 'rejected' && r.reason?.code !== 'storage/object-not-found')
+      .map(r => r.reason?.message);
+    return { success: errors.length === 0, errors };
+  }
+
+  /**
+   * Ensure all images for prompts currently stored locally are uploaded to Storage.
+   * Used by the "Sync local images" backfill.
+   * @param {Function} onProgress - Optional callback ({done, total})
+   * @returns {Promise<{uploaded: number, failed: number, skipped: number}>}
+   */
+  async backfillLocalImages(onProgress) {
+    if (!this.storage || !this.user || !this.promptLibraryManager) {
+      return { uploaded: 0, failed: 0, skipped: 0, error: 'Not ready' };
+    }
+    const allPrompts = this.promptLibraryManager.getAllPromptsAcrossScopes();
+    const images = [];
+    for (const p of allPrompts) {
+      for (const img of (p.images || [])) images.push(img);
+    }
+    let uploaded = 0, failed = 0, skipped = 0;
+    const total = images.length;
+    for (let i = 0; i < images.length; i++) {
+      // eslint-disable-next-line no-await-in-loop
+      const r = await this._uploadImageToStorage(images[i]);
+      if (r.skipped) skipped++;
+      else if (r.success) uploaded++;
+      else failed++;
+      if (onProgress) onProgress({ done: i + 1, total });
+    }
+    return { uploaded, failed, skipped, total };
+  }
+
+  // --- User label registry sync ---
+
+  /**
+   * Push local labels to Firestore (single doc per user).
+   */
+  async pushLabelsToFirebase(labels, labelColors) {
+    if (!this.user || !this.db || !this.syncEnabled) return;
+    try {
+      const ref = doc(this.db, USER_LABELS_COLLECTION, this.user.uid);
+      await setDoc(ref, {
+        userId: this.user.uid,
+        labels: labels || [],
+        labelColors: labelColors || {},
+        updatedAt: serverTimestamp()
+      });
+    } catch (err) {
+      console.error('[FirebaseSyncAdapter] Label push failed:', err.message);
+    }
+  }
+
+  /**
+   * Subscribe to label registry changes.
+   * @private
+   */
+  _startLabelsRealtimeSync() {
+    if (!this.user || !this.db) return;
+    const ref = doc(this.db, USER_LABELS_COLLECTION, this.user.uid);
+    const unsub = onSnapshot(ref, (snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data();
+      this.emit('remote-labels-changed', {
+        labels: Array.isArray(data.labels) ? data.labels : [],
+        labelColors: data.labelColors || {}
+      });
+    }, (err) => {
+      console.error('[FirebaseSyncAdapter] Labels onSnapshot error:', err.message);
+    });
+    this.unsubscribers.push(unsub);
   }
 
   /**
@@ -572,22 +824,30 @@ class FirebaseSyncAdapter extends EventEmitter {
     // For content fields, newer wins
     const contentSource = remoteTime > localTime ? remote : local;
 
+    // Type follows newer-wins (conversion is an explicit user action).
+    const mergedType = (contentSource.type === 'note') ? 'note' : 'prompt';
+    const isNote = mergedType === 'note';
+
     return {
       id: local.id,
+      type: mergedType,
       title: contentSource.title,
       prompt: contentSource.prompt,
       // Merge arrays (union)
       labels: [...new Set([...(local.labels || []), ...(remote.labels || [])])],
       images: [...new Set([...(local.images || []), ...(remote.images || [])])],
-      // Boolean flags - if either is true, keep true
+      // Boolean flags - if either is true, keep true. Notes force all lifecycle flags off.
       isFavorite: local.isFavorite || remote.isFavorite,
-      reusable: local.reusable || remote.reusable,
-      done: local.done || remote.done,
-      testing: local.testing || remote.testing,
+      reusable: isNote ? false : (local.reusable || remote.reusable),
+      done: isNote ? false : (local.done || remote.done),
+      testing: isNote ? false : (local.testing || remote.testing),
       // Take from newer
       scope: contentSource.scope,
       order: contentSource.order,
-      createdAt: Math.min(local.createdAt || Date.now(), remoteTime || Date.now()),
+      createdAt: Math.min(
+        local.createdAt || Date.now(),
+        remote.createdAt?.toMillis?.() ?? remote.createdAt ?? Date.now()
+      ),
       updatedAt: Math.max(localTime, remoteTime)
     };
   }
@@ -680,6 +940,17 @@ class FirebaseSyncAdapter extends EventEmitter {
   destroy() {
     this._stopRealtimeSync();
     this.removeAllListeners();
+  }
+}
+
+function _extToMime(ext) {
+  switch ((ext || '').toLowerCase()) {
+    case '.png': return 'image/png';
+    case '.jpg':
+    case '.jpeg': return 'image/jpeg';
+    case '.gif': return 'image/gif';
+    case '.webp': return 'image/webp';
+    default: return 'application/octet-stream';
   }
 }
 

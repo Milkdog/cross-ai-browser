@@ -97,8 +97,46 @@ html, body {
   max-width: 100%;
   background: var(--color-primary-base, #6366f1);
   border-radius: 2px;
-  transition: width var(--transition-slow, 0.3s ease), background-color var(--transition-slow, 0.3s ease);
+  transition:
+    width var(--transition-slow, 0.3s ease),
+    background-color var(--transition-slow, 0.3s ease),
+    opacity 1s linear;
   width: 0%;
+  opacity: 1;
+}
+
+/* Extra Usage (pay-as-you-go credits) — only shown when the user has opted in.
+   Rendered as a highlighted chip so it stands out from the always-on bars. */
+#extra-usage-bar {
+  flex: 0 0 auto;
+  gap: var(--spacing-2, 8px);
+  padding: 2px var(--spacing-2, 8px);
+  border: 1px solid var(--color-status-info, #3b82f6);
+  border-radius: var(--radius-md, 6px);
+  background: var(--color-status-infoMuted, rgba(59, 130, 246, 0.15));
+}
+
+#extra-usage-bar[hidden] {
+  display: none;
+}
+
+#extra-usage-bar .usage-label {
+  color: var(--color-status-info, #3b82f6);
+  min-width: 0;
+}
+
+#extra-usage-bar .usage-track {
+  width: 48px;
+  flex: 0 0 auto;
+}
+
+#extra-usage-bar .usage-text {
+  color: var(--color-text-primary, #fff);
+  min-width: 0;
+}
+
+#extra-fill {
+  background: var(--color-status-info, #3b82f6);
 }
 
 .usage-fill.warning {
@@ -131,4 +169,60 @@ html, body {
   min-width: 100px;
   text-align: right;
   white-space: nowrap;
+}
+
+#usage-freshness {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: var(--color-text-muted, #808080);
+  opacity: 0.5;
+  cursor: help;
+  transition: opacity var(--transition-fast, 0.15s ease), color var(--transition-fast, 0.15s ease);
+  flex-shrink: 0;
+}
+
+#usage-freshness:hover {
+  opacity: 1;
+}
+
+#usage-freshness.stale {
+  color: var(--color-status-warning, #fbbf24);
+  opacity: 0.8;
+}
+
+#usage-freshness.error {
+  color: var(--color-status-error, #ef4444);
+  opacity: 0.9;
+}
+
+#usage-tooltip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  min-width: 180px;
+  max-width: 420px;
+  padding: 8px 10px;
+  background: var(--color-bg-elevated, #2a2a30);
+  border: 1px solid var(--color-border-default, #444);
+  border-radius: var(--radius-md, 6px);
+  color: var(--color-text-primary, #fff);
+  font-size: var(--font-size-xs, 10px);
+  line-height: 1.4;
+  white-space: normal;
+  word-break: break-word;
+  box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.4));
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  z-index: 1000;
+}
+
+#usage-freshness:hover #usage-tooltip {
+  opacity: 1;
+  transform: translateY(0);
 }

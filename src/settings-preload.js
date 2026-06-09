@@ -23,7 +23,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getFirebaseStatus: () => ipcRenderer.invoke('firebase-get-status'),
   firebaseLogin: (email, password) => ipcRenderer.invoke('firebase-login', email, password),
   firebaseLogout: () => ipcRenderer.invoke('firebase-logout'),
+  firebaseBackfillImages: () => ipcRenderer.invoke('firebase-backfill-images'),
   onFirebaseSyncStatus: (callback) => {
     ipcRenderer.on('firebase-sync-status', (event, status) => callback(status));
+  },
+  onBackfillProgress: (callback) => {
+    ipcRenderer.on('firebase-backfill-progress', (event, data) => callback(data));
   }
 });

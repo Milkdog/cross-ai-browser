@@ -147,6 +147,78 @@ class PromptImageManager {
   }
 
   /**
+   * Check whether an image file exists locally (any allowed extension).
+   * @param {string} imageId
+   * @returns {boolean}
+   */
+  hasLocalImage(imageId) {
+    if (!imageId) return false;
+    for (const ext of this.allowedFormats) {
+      if (fs.existsSync(this._getImagePath(imageId, ext))) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Find the local path for an image id, if present.
+   * @param {string} imageId
+   * @returns {string|null}
+   */
+  findLocalImagePath(imageId) {
+    if (!imageId) return null;
+    for (const ext of this.allowedFormats) {
+      const p = this._getImagePath(imageId, ext);
+      if (fs.existsSync(p)) return p;
+    }
+    return null;
+  }
+
+  /**
+   * Write image bytes to the local store under the given id.
+   * Used when downloading an image from Firebase Storage.
+   * @param {string} imageId
+   * @param {Buffer} buffer
+   * @param {string} ext - File extension including the dot (defaults to .png)
+   * @returns {{success: boolean, path?: string, error?: string}}
+   */
+  writeFromBuffer(imageId, buffer, ext = '.png') {
+    try {
+      const safeExt = this.allowedFormats.includes(ext.toLowerCase()) ? ext.toLowerCase() : '.png';
+      const destPath = this._getImagePath(imageId, safeExt);
+      fs.writeFileSync(destPath, buffer);
+      return { success: true, path: destPath };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
+   * Write a pre-made thumbnail buffer to local storage.
+   * @param {string} imageId
+   * @param {Buffer} buffer
+   * @returns {{success: boolean, error?: string}}
+   */
+  writeThumbnailFromBuffer(imageId, buffer) {
+    try {
+      fs.writeFileSync(this._getThumbnailPath(imageId), buffer);
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
+   * Regenerate thumbnail for an image that already lives on disk.
+   * @param {string} imageId
+   * @returns {Promise<boolean>}
+   */
+  async regenerateThumbnail(imageId) {
+    const localPath = this.findLocalImagePath(imageId);
+    if (!localPath) return false;
+    return this.generateThumbnail(localPath, this._getThumbnailPath(imageId));
+  }
+
+  /**
    * Add an image from a file path
    * @param {string} sourcePath - Path to the image file
    * @returns {Promise<{success: boolean, image?: object, error?: string}>}

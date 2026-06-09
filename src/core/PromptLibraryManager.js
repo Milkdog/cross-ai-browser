@@ -88,8 +88,13 @@ class PromptLibraryManager extends EventEmitter {
     if (migrated.images === undefined) migrated.images = [];
     if (migrated.isFavorite === undefined) migrated.isFavorite = false;
     if (migrated.scope === undefined) migrated.scope = 'project';
+    if (migrated.type !== 'note' && migrated.type !== 'prompt') migrated.type = 'prompt';
 
     return migrated;
+  }
+
+  _isNote(type) {
+    return type === 'note';
   }
 
   /**
@@ -217,15 +222,19 @@ class PromptLibraryManager extends EventEmitter {
       .filter(l => l.length > 0)
       .filter((l, i, arr) => arr.indexOf(l) === i);
 
+    const type = promptData.type === 'note' ? 'note' : 'prompt';
+    const isNote = this._isNote(type);
     const now = Date.now();
     const prompt = {
       id: `prompt-${crypto.randomUUID()}`,
+      type,
       prompt: promptData.prompt.trim(),
       title: promptData.title ? promptData.title.trim() : null,
       labels,
       images: promptData.images || [],
       isFavorite: promptData.isFavorite || false,
-      reusable: promptData.reusable || false,
+      // Notes can never be reusable/done/testing — force false.
+      reusable: isNote ? false : (promptData.reusable || false),
       done: false,
       scope,
       order: prompts.length,
@@ -299,8 +308,21 @@ class PromptLibraryManager extends EventEmitter {
     if (updates.isFavorite !== undefined) {
       prompt.isFavorite = updates.isFavorite;
     }
+    if (updates.type !== undefined) {
+      const newType = updates.type === 'note' ? 'note' : 'prompt';
+      prompt.type = newType;
+      if (this._isNote(newType)) {
+        // Notes cannot carry prompt-lifecycle state.
+        prompt.reusable = false;
+        prompt.done = false;
+        prompt.testing = false;
+        delete prompt.doneAt;
+        delete prompt.testingStartedAt;
+      }
+    }
     if (updates.reusable !== undefined) {
-      prompt.reusable = updates.reusable;
+      // Notes stay non-reusable regardless of what the UI sends.
+      prompt.reusable = this._isNote(prompt.type) ? false : updates.reusable;
     }
     if (updates.images !== undefined) {
       // Validate images array
@@ -388,17 +410,20 @@ class PromptLibraryManager extends EventEmitter {
       return null;
     }
 
+    const type = promptData.type === 'note' ? 'note' : 'prompt';
+    const isNote = this._isNote(type);
     const now = Date.now();
     const prompt = {
       id: promptData.id,
+      type,
       prompt: (promptData.prompt || '').trim(),
       title: promptData.title ? promptData.title.trim() : null,
       labels: promptData.labels || [],
       images: promptData.images || [],
       isFavorite: promptData.isFavorite || false,
-      reusable: promptData.reusable || false,
-      done: promptData.done || false,
-      testing: promptData.testing || false,
+      reusable: isNote ? false : (promptData.reusable || false),
+      done: isNote ? false : (promptData.done || false),
+      testing: isNote ? false : (promptData.testing || false),
       scope: isGlobal ? 'global' : 'project',
       order: promptData.order !== undefined ? promptData.order : prompts.length,
       createdAt: promptData.createdAt || now,
@@ -444,11 +469,20 @@ class PromptLibraryManager extends EventEmitter {
     if (updates.prompt !== undefined) prompt.prompt = (updates.prompt || '').trim();
     if (updates.title !== undefined) prompt.title = updates.title ? updates.title.trim() : null;
     if (updates.labels !== undefined) prompt.labels = updates.labels || [];
+    if (updates.images !== undefined) prompt.images = updates.images || [];
     if (updates.isFavorite !== undefined) prompt.isFavorite = updates.isFavorite;
+    if (updates.type !== undefined) prompt.type = updates.type === 'note' ? 'note' : 'prompt';
     if (updates.reusable !== undefined) prompt.reusable = updates.reusable;
     if (updates.done !== undefined) prompt.done = updates.done;
     if (updates.testing !== undefined) prompt.testing = updates.testing;
     if (updates.order !== undefined) prompt.order = updates.order;
+
+    // Notes can't carry prompt-lifecycle state, regardless of what the remote sent.
+    if (this._isNote(prompt.type)) {
+      prompt.reusable = false;
+      prompt.done = false;
+      prompt.testing = false;
+    }
 
     prompt.updatedAt = Date.now();
 
@@ -528,15 +562,17 @@ class PromptLibraryManager extends EventEmitter {
       throw new Error(`Maximum of ${MAX_PROMPTS_PER_DIRECTORY} prompts per ${scope === 'global' ? 'global library' : 'directory'}`);
     }
 
+    const type = existingPrompt.type === 'note' ? 'note' : 'prompt';
     const now = Date.now();
     const newPrompt = {
       id: `prompt-${crypto.randomUUID()}`,
+      type,
       prompt: existingPrompt.prompt,
       title: existingPrompt.title ? `${existingPrompt.title} (copy)` : null,
       labels: [...(existingPrompt.labels || [])],
       images: [], // Don't copy images to avoid shared references
       isFavorite: false,
-      reusable: existingPrompt.reusable || false,
+      reusable: this._isNote(type) ? false : (existingPrompt.reusable || false),
       done: false,
       scope,
       order: existingPrompt.order + 1,
@@ -952,6 +988,30 @@ class PromptLibraryManager extends EventEmitter {
     this.store.set('promptLibrary.labelColors', labelColors);
     this.emit('labels-updated', { labels, labelColors });
     return true;
+  }
+
+  /**
+   * Replace the local label registry with a remote-authored set.
+   * Does NOT emit `labels-updated` — that event is reserved for local edits and
+   * re-emitting it would cause a sync ping-pong. Emits `labels-applied-remote`
+   * so the renderer can still refresh its UI.
+   * @param {Array<string>} labels
+   * @param {Object<string, number>} labelColors
+   */
+  applyRemoteLabels(labels, labelColors) {
+    const safeLabels = Array.isArray(labels) ? labels : [];
+    const safeColors = labelColors && typeof labelColors === 'object' ? labelColors : {};
+    this.store.set('promptLibrary.labels', safeLabels);
+    this.store.set('promptLibrary.labelColors', safeColors);
+    this.emit('labels-applied-remote', { labels: safeLabels, labelColors: safeColors });
+  }
+
+  /**
+   * Return every prompt across project + global scopes. Used by sync backfills.
+   * @returns {Array<Object>}
+   */
+  getAllPromptsAcrossScopes() {
+    return this.storageEngine.readAllPrompts();
   }
 
   // Legacy aliases

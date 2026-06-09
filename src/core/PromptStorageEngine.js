@@ -188,6 +188,30 @@ class PromptStorageEngine {
     return this.baseDir;
   }
 
+  /**
+   * Read every prompt stored on disk across all projects and the global list.
+   * Used for sync backfills that don't need cwd attribution.
+   * @returns {Array} Flat list of prompt objects
+   */
+  readAllPrompts() {
+    const results = [];
+    try {
+      for (const p of this.readGlobalPrompts()) results.push(p);
+    } catch {}
+    try {
+      const entries = fs.readdirSync(this.baseDir);
+      for (const entry of entries) {
+        if (entry === 'global.json' || !entry.endsWith('.json')) continue;
+        try {
+          const content = fs.readFileSync(path.join(this.baseDir, entry), 'utf-8');
+          const data = JSON.parse(content);
+          if (Array.isArray(data)) for (const p of data) results.push(p);
+        } catch {}
+      }
+    } catch {}
+    return results;
+  }
+
   // Legacy aliases for backward compatibility during migration
   readCards(cwd) {
     return this.readPrompts(cwd);

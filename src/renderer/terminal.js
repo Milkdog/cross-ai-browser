@@ -148,7 +148,7 @@ function fitTerminal() {
   }
 }
 
-// Multiple fit attempts to handle BrowserView bounds timing
+// Multiple fit attempts to handle WebContentsView bounds timing
 function initializeFit() {
   // Try fitting at increasing intervals until we get valid size
   const delays = [50, 150, 300, 500, 1000];
@@ -455,6 +455,23 @@ window.electronAPI.onExit(({ exitCode, signal }) => {
   });
 });
 
+// Live countdown state \u2014 last payload from main caches percent + resetsAt,
+// then a 1s tick recomputes the time-remaining string locally so the clock
+// is realtime between server fetches.
+const usageState = { session: null, weekly: null, extra: null };
+
+function formatTimeRemainingMs(ms) {
+  if (ms == null) return '--';
+  if (ms <= 0) return 'now';
+  const totalMins = Math.floor(ms / 60000);
+  const days = Math.floor(totalMins / (60 * 24));
+  const hours = Math.floor(totalMins / 60) % 24;
+  const mins = totalMins % 60;
+  if (days > 0) return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+  if (hours > 0) return `${hours}h ${mins}m`;
+  return `${mins}m`;
+}
+
 // Usage bar update functionality
 function updateUsageBar(type, data) {
   if (!data) return;
@@ -464,6 +481,21 @@ function updateUsageBar(type, data) {
   const markerEl = document.getElementById(`${type}-time-marker`);
 
   if (!fillEl || !textEl) return;
+
+  // Compute live values when we have resetsAt (overrides server-formatted strings)
+  let timeText = data.timeLeft || '--';
+  let timeElapsedPercent = data.timeElapsedPercent;
+  if (data.resetsAt && data.windowMinutes) {
+    const remainingMs = data.resetsAt - Date.now();
+    timeText = formatTimeRemainingMs(remainingMs);
+    if (remainingMs <= 0) {
+      timeElapsedPercent = 100;
+    } else {
+      const windowMs = data.windowMinutes * 60 * 1000;
+      const elapsed = ((windowMs - remainingMs) / windowMs) * 100;
+      timeElapsedPercent = Math.max(0, Math.min(100, elapsed));
+    }
+  }
 
   // Update progress bar width
   const percentage = data.percentUsed || 0;
@@ -478,8 +510,8 @@ function updateUsageBar(type, data) {
   }
 
   // Update time-elapsed marker
-  if (markerEl && data.timeElapsedPercent != null) {
-    markerEl.style.left = `${data.timeElapsedPercent}%`;
+  if (markerEl && timeElapsedPercent != null) {
+    markerEl.style.left = `${timeElapsedPercent}%`;
     markerEl.classList.add('visible');
   } else if (markerEl) {
     markerEl.classList.remove('visible');
@@ -487,15 +519,188 @@ function updateUsageBar(type, data) {
 
   // Update text display
   const percentText = percentage > 0 ? `${Math.round(percentage)}%` : '--';
-  const timeText = data.timeLeft || '--';
   textEl.textContent = `${percentText} \u2022 ${timeText}`;
 }
 
+// Fade the bars from full-strength (just-fetched) to a muted blue as the data
+// ages over the 5-minute fetch interval. Resets to full strength when a new
+// payload arrives. Track stays solid so bar length is still legible.
+const USAGE_FETCH_INTERVAL_MS = 5 * 60 * 1000;
+const USAGE_OPACITY_FRESH = 1.0;
+const USAGE_OPACITY_STALE = 0.35;
+
+function applyUsageFreshness() {
+  if (!lastUsageFetchedAt) return;
+  const age = Date.now() - lastUsageFetchedAt;
+  const ratio = Math.max(0, Math.min(1, age / USAGE_FETCH_INTERVAL_MS));
+  const opacity = USAGE_OPACITY_FRESH - (USAGE_OPACITY_FRESH - USAGE_OPACITY_STALE) * ratio;
+  for (const id of ['session-fill', 'weekly-fill', 'extra-fill']) {
+    const el = document.getElementById(id);
+    if (el) el.style.opacity = opacity.toFixed(3);
+  }
+}
+
+// Format a credit amount as localized currency, falling back to a plain "$" form.
+function formatUsageCurrency(amount, currency) {
+  if (amount == null) return null;
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: 'currency',
+      currency: currency || 'USD',
+      maximumFractionDigits: 2
+    }).format(amount);
+  } catch (_) {
+    return `$${Number(amount).toFixed(2)}`;
+  }
+}
+
+// Show/hide and populate the Extra Usage chip. Hidden entirely unless the user
+// has enabled pay-as-you-go credits; when enabled it highlights and shows the
+// remaining budget.
+function updateExtraUsage(extra) {
+  const bar = document.getElementById('extra-usage-bar');
+  if (!bar) return;
+
+  if (!extra || !extra.enabled) {
+    bar.hidden = true;
+    return;
+  }
+  bar.hidden = false;
+
+  const fillEl = document.getElementById('extra-fill');
+  const textEl = document.getElementById('extra-text');
+
+  // The fill bar tracks overage utilization (how much of the monthly spend cap
+  // has been used) when known; the prepaid balance has no natural 0-100 scale.
+  if (fillEl) {
+    fillEl.style.width = extra.utilization != null ? `${Math.min(extra.utilization, 100)}%` : '0%';
+  }
+
+  if (textEl) {
+    // "Budget remaining" the user cares about is the prepaid credit balance,
+    // not the overage cap. Prefer it; fall back to overage figures.
+    const balance = extra.balance ? formatUsageCurrency(extra.balance.amount, extra.balance.currency) : null;
+    const remaining = formatUsageCurrency(extra.remaining, extra.currency);
+    const limit = formatUsageCurrency(extra.monthlyLimit, extra.currency);
+
+    if (balance != null) {
+      textEl.textContent = `${balance} left`;
+      // Surface the overage cap/used detail on hover.
+      if (remaining != null && limit != null) {
+        textEl.title = `Prepaid balance. Overage: ${formatUsageCurrency(extra.usedCredits, extra.currency)} of ${limit} cap used`;
+      } else {
+        textEl.removeAttribute('title');
+      }
+    } else if (remaining != null && limit != null) {
+      textEl.textContent = `${remaining} left of ${limit}`;
+      textEl.removeAttribute('title');
+    } else if (extra.utilization != null) {
+      textEl.textContent = `${extra.utilization}% used`;
+      textEl.removeAttribute('title');
+    } else {
+      textEl.textContent = 'enabled';
+      textEl.removeAttribute('title');
+    }
+  }
+}
+
+// Tick once per second to keep the countdown text + elapsed marker + fade fresh.
+setInterval(() => {
+  if (usageState.session) updateUsageBar('session', usageState.session);
+  if (usageState.weekly) updateUsageBar('weekly', usageState.weekly);
+  applyUsageFreshness();
+}, 1000);
+
+// Freshness tracking
+let lastUsageFetchedAt = null;
+let lastUsageError = null;
+
+function formatRelativeTime(ms) {
+  const secs = Math.floor(ms / 1000);
+  if (secs < 5) return 'just now';
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  return `${hours}h ago`;
+}
+
+function refreshFreshnessIndicator() {
+  const el = document.getElementById('usage-freshness');
+  const tooltip = document.getElementById('usage-tooltip');
+  if (!el || !tooltip) return;
+
+  el.classList.remove('stale', 'error');
+
+  if (lastUsageError && !lastUsageFetchedAt) {
+    el.classList.add('error');
+    tooltip.textContent = `Usage fetch failed: ${lastUsageError}`;
+    return;
+  }
+
+  if (!lastUsageFetchedAt) {
+    tooltip.textContent = 'Usage data not yet loaded — updates every 5 minutes';
+    return;
+  }
+
+  const age = Date.now() - lastUsageFetchedAt;
+  const relative = formatRelativeTime(age);
+
+  if (lastUsageError) {
+    el.classList.add('error');
+    tooltip.textContent = `Last updated ${relative} — last refresh failed: ${lastUsageError}`;
+  } else if (age > 10 * 60 * 1000) {
+    el.classList.add('stale');
+    tooltip.textContent = `Last updated ${relative} (stale) — updates every 5 minutes`;
+  } else {
+    tooltip.textContent = `Last updated ${relative} — updates every 5 minutes`;
+  }
+}
+
+setInterval(refreshFreshnessIndicator, 5000);
+
 // Listen for usage updates from main process
 window.electronAPI.onUsageUpdate((data) => {
-  const { session, weekly } = data;
+  if (!data) return;
+
+  // Bare error with no data to fall back on — only then do we blank the bars.
+  // (Main only sends this when no usage has ever been fetched successfully.)
+  if (data.error && !data.session && !data.weekly) {
+    console.error('[usage] fetch error:', data.error);
+    lastUsageError = data.error;
+    if (!lastUsageFetchedAt) {
+      const sessionText = document.getElementById('session-text');
+      const weeklyText = document.getElementById('weekly-text');
+      if (sessionText) sessionText.textContent = 'usage api error';
+      if (weeklyText) weeklyText.textContent = 'usage api error';
+    }
+    refreshFreshnessIndicator();
+    return;
+  }
+
+  // Fresh data, or last-known-good carried with a `lastError` annotation when
+  // the most recent refresh failed. Either way we render the values so the bars
+  // never blank on a transient failure; the freshness indicator flags staleness.
+  lastUsageError = data.lastError || null;
+  if (data.fetchedAt) lastUsageFetchedAt = data.fetchedAt;
+
+  const sessionText = document.getElementById('session-text');
+  const weeklyText = document.getElementById('weekly-text');
+  if (sessionText) sessionText.removeAttribute('title');
+  if (weeklyText) weeklyText.removeAttribute('title');
+
+  const { session, weekly, extra } = data;
+  // Cache so the 1s tick keeps the countdown and elapsed marker live.
+  // A new server payload fully replaces these — including resetsAt — so any
+  // server-side correction propagates immediately.
+  usageState.session = session || null;
+  usageState.weekly = weekly || null;
+  usageState.extra = extra || null;
   updateUsageBar('session', session);
   updateUsageBar('weekly', weekly);
+  updateExtraUsage(extra);
+  applyUsageFreshness();
+  refreshFreshnessIndicator();
 });
 
 // Request initial usage data once terminal is ready

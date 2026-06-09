@@ -7,7 +7,7 @@ An Electron app that provides a unified tabbed interface for AI chat services (C
 
 ### Main Process (`src/main.js`)
 - Creates the main window with a 160px sidebar for tab navigation
-- Manages BrowserViews for each tab (web services and terminals)
+- Manages WebContentsViews for each tab (web services and terminals)
 - Handles IPC communication between sidebar and content views
 - Manages settings via electron-store
 - Shows desktop notifications when AI responses complete
@@ -16,7 +16,7 @@ An Electron app that provides a unified tabbed interface for AI chat services (C
 ### Core Modules (`src/core/`)
 - `ServiceRegistry.js` - Defines available service types (ChatGPT, Claude, Gemini, Claude Code)
 - `TabManager.js` - Manages tab state, persistence, ordering, and naming
-- `ViewManager.js` - Handles BrowserView lifecycle, switching, and terminal streaming detection
+- `ViewManager.js` - Handles WebContentsView lifecycle, switching, and terminal streaming detection
 - `DownloadManager.js` - Manages file downloads with thumbnails and history
 - `HistoryManager.js` - Coordinates terminal session history capture and retention
 - `TerminalThemes.js` - Terminal color theme definitions
@@ -49,7 +49,7 @@ An Electron app that provides a unified tabbed interface for AI chat services (C
 
 ## Key Technical Decisions
 - **Shared session partition** - All web services share `persist:shared` for unified login (Google OAuth works across services)
-- **BrowserViews over webviews** - Better isolation and performance
+- **WebContentsViews over webviews** - Better isolation and performance
 - **Multi-tab architecture** - Multiple instances of same service supported
 - **Modular core** - ServiceRegistry, TabManager, ViewManager separation
 - **node-pty + xterm.js** - Native terminal for Claude Code
@@ -162,19 +162,27 @@ history/
 ```
 Session metadata stored in electron-store under `history.sessions`.
 
-## Prompt Library
-A collapsible panel in Claude Code terminals for managing reusable prompts with image attachments.
+## Library (Prompts + Notes)
+A collapsible panel in Claude Code terminals for managing reusable prompts and notes with image attachments.
+
+### Item Types
+Every item has a `type` field (default `'prompt'`):
+- **Prompt** — can be sent to the terminal, participates in Reusable / Regular / Testing / Done lifecycle.
+- **Note** — sketchpad / saved-command entries. Cannot be sent to the terminal, cannot be reusable, no lifecycle states. Can be global and can hold images and labels.
+
+Users can convert between types at any time; converting to a note strips incompatible flags (reusable/done/testing).
 
 ### Features
-- **CRUD operations** - Create, edit, duplicate, delete prompts
+- **CRUD operations** - Create, edit, duplicate, delete prompts and notes
 - **Image attachments** - Add images via file picker, drag-drop, or clipboard paste
-- **Favorites** - Pin important prompts to a dedicated section
-- **Labels** - Tag prompts with multiple labels for organization
-- **Reusable flag** - Mark prompts that shouldn't move to Done after use
-- **Done section** - Completed prompts move here (unless reusable)
-- **Drag-drop reordering** - Reorder prompts within the panel
-- **Scopes** - Global prompts (shared across projects) vs Project prompts (per working directory)
-- **Search/filter** - Filter prompts by title, content, or labels
+- **Favorites** - Pin important items to the top of their section
+- **Labels** - Tag items with multiple labels for organization
+- **Reusable flag** (prompts only) - Mark prompts that shouldn't move to Done after use
+- **Done / Testing sections** (prompts only) - Lifecycle states for non-reusable prompts
+- **Notes section** - Collapsible, separate from prompt sections
+- **Drag-drop reordering** - Reorder prompts within the panel (notes are not draggable)
+- **Scopes** - Global (shared across projects) vs Project (per working directory)
+- **Search/filter** - Filter by title, content, or labels across prompts and notes
 
 ### Image Attachment Flow
 1. Images are stored in `~/Library/Application Support/Cross AI Browser/prompt-images/`
@@ -249,7 +257,7 @@ src/
 ├── core/
 │   ├── ServiceRegistry.js     # Service type definitions
 │   ├── TabManager.js          # Tab state management
-│   ├── ViewManager.js         # BrowserView management, streaming detection
+│   ├── ViewManager.js         # WebContentsView management, streaming detection
 │   ├── DownloadManager.js     # Download management
 │   ├── HistoryManager.js      # Terminal session history coordinator
 │   ├── TerminalThemes.js      # Terminal color themes
@@ -292,9 +300,9 @@ storage.rules                  # Root-level Storage security rules
 The following security measures are implemented:
 
 ### Navigation & Window Security
-- **Navigation allowlist** - `will-navigate` handlers restrict BrowserView navigation to allowed AI service origins
+- **Navigation allowlist** - `will-navigate` handlers restrict WebContentsView navigation to allowed AI service origins
 - **Strict window.open validation** - Uses hostname-based allowlist instead of substring matching
-- **Sandbox mode** - All BrowserViews have `sandbox: true` enabled
+- **Sandbox mode** - All WebContentsViews have `sandbox: true` enabled
 
 ### IPC Security
 - **Setting key allowlist** - `set-setting` handler only accepts whitelisted keys

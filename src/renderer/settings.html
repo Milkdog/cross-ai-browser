@@ -618,6 +618,10 @@
               </div>
             </div>
             <div class="settings-group">
+              <button class="action-btn" id="firebase-backfill-btn">Sync local images to cloud</button>
+              <div id="firebase-backfill-status" class="sync-status" style="display: none;"></div>
+            </div>
+            <div class="settings-group">
               <button class="action-btn danger" id="firebase-logout-btn">Sign Out</button>
             </div>
           </div>
@@ -886,6 +890,30 @@
         updateFirebaseUI({ user: null });
       } catch (e) {
         console.error('Logout failed:', e);
+      }
+    };
+
+    const firebaseBackfillBtn = document.getElementById('firebase-backfill-btn');
+    const firebaseBackfillStatus = document.getElementById('firebase-backfill-status');
+    if (window.electronAPI.onBackfillProgress) {
+      window.electronAPI.onBackfillProgress(({ done, total }) => {
+        firebaseBackfillStatus.style.display = 'block';
+        firebaseBackfillStatus.textContent = `Uploading ${done} / ${total}…`;
+      });
+    }
+    firebaseBackfillBtn.onclick = async () => {
+      firebaseBackfillBtn.disabled = true;
+      firebaseBackfillStatus.style.display = 'block';
+      firebaseBackfillStatus.textContent = 'Starting…';
+      try {
+        const result = await window.electronAPI.firebaseBackfillImages();
+        if (result.success) {
+          firebaseBackfillStatus.textContent = `Done: ${result.uploaded} uploaded, ${result.skipped} already synced, ${result.failed} failed.`;
+        } else {
+          firebaseBackfillStatus.textContent = `Error: ${result.error || 'unknown'}`;
+        }
+      } finally {
+        firebaseBackfillBtn.disabled = false;
       }
     };
 

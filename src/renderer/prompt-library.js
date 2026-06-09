@@ -28,6 +28,7 @@ class PromptLibrary {
     this.testingCollapsed = false;
     this.reusableCollapsed = false;
     this.regularCollapsed = false;
+    this.notesCollapsed = false;
     this.searchQuery = '';
     this.testingTimerInterval = null;
     this.isInlineEditing = false;
@@ -718,14 +719,18 @@ class PromptLibrary {
     // Apply search filter
     const filteredPrompts = this.filterPrompts(this.prompts);
 
-    // Categorize prompts by section
-    // Reusable prompts never go to testing/done - combine global and project, global first
-    const reusablePrompts = filteredPrompts.filter(p => p.reusable);
+    // Notes are a distinct item type and get their own section — no lifecycle states.
+    const isNote = (p) => p.type === 'note';
+    const notes = filteredPrompts.filter(isNote);
 
+    // Prompt-type items split by lifecycle.
+    const promptItems = filteredPrompts.filter(p => !isNote(p));
+    // Reusable prompts never go to testing/done - combine global and project, global first
+    const reusablePrompts = promptItems.filter(p => p.reusable);
     // Non-reusable prompts can be in regular, testing, or done
-    const regularPrompts = filteredPrompts.filter(p => !p.reusable && !p.done && !p.testing);
-    const testingPrompts = filteredPrompts.filter(p => !p.reusable && p.testing && !p.done);
-    const donePrompts = filteredPrompts.filter(p => !p.reusable && p.done);
+    const regularPrompts = promptItems.filter(p => !p.reusable && !p.done && !p.testing);
+    const testingPrompts = promptItems.filter(p => !p.reusable && p.testing && !p.done);
+    const donePrompts = promptItems.filter(p => !p.reusable && p.done);
 
     // Sort reusable: global first, then favorites, then by order
     reusablePrompts.sort((a, b) => {
@@ -746,6 +751,15 @@ class PromptLibrary {
     };
 
     regularPrompts.sort(sortWithFavoritesFirst);
+
+    // Sort notes: global first, then favorites, then by order (mirrors reusable order)
+    notes.sort((a, b) => {
+      if (a.scope === 'global' && b.scope !== 'global') return -1;
+      if (a.scope !== 'global' && b.scope === 'global') return 1;
+      if (a.isFavorite && !b.isFavorite) return -1;
+      if (!a.isFavorite && b.isFavorite) return 1;
+      return (a.order || 0) - (b.order || 0);
+    });
 
     // Sort testing prompts by testingStartedAt descending (newest first), favorites first
     testingPrompts.sort((a, b) => {
@@ -776,6 +790,14 @@ class PromptLibrary {
       emptyState.appendChild(text);
       this.promptsContainer.appendChild(emptyState);
       return;
+    }
+
+    // 0. Render Notes section first
+    if (notes.length > 0) {
+      const section = this.createSection('NOTES', notes, this.notesCollapsed, (collapsed) => {
+        this.notesCollapsed = collapsed;
+      }, 'notes');
+      this.promptsContainer.appendChild(section);
     }
 
     // 1. Render Reusable section (global prompts first, then project)
@@ -1076,10 +1098,16 @@ class PromptLibrary {
    * Create a prompt DOM element safely
    */
   createPromptElement(prompt, isDone = false) {
+    const isNote = prompt.type === 'note';
     const promptEl = document.createElement('div');
-    promptEl.className = 'prompt-card' + (isDone ? ' done' : '') + (prompt.reusable ? ' compact' : '');
+    promptEl.className = 'prompt-card'
+      + (isDone ? ' done' : '')
+      + (prompt.reusable ? ' compact' : '')
+      + (isNote ? ' note' : '');
     promptEl.dataset.promptId = prompt.id;
-    promptEl.draggable = !isDone;
+    promptEl.dataset.type = prompt.type || 'prompt';
+    // Notes can never be dragged to the terminal.
+    promptEl.draggable = !isDone && !isNote;
 
     // For reusable prompts, show scope icon inline with first text
     if (prompt.reusable && !isDone) {
@@ -1253,6 +1281,14 @@ class PromptLibrary {
       dupLabel.textContent = 'Copy';
       duplicateBtn.appendChild(dupLabel);
 
+      // Convert between Prompt and Note
+      const convertBtn = document.createElement('button');
+      convertBtn.className = 'prompt-card-action convert';
+      convertBtn.title = isNote ? 'Convert to Prompt' : 'Convert to Note';
+      const convertLabel = document.createElement('span');
+      convertLabel.textContent = isNote ? '→ Prompt' : '→ Note';
+      convertBtn.appendChild(convertLabel);
+
       const deleteBtn = document.createElement('button');
       deleteBtn.className = 'prompt-card-action delete';
       deleteBtn.title = 'Delete';
@@ -1263,6 +1299,7 @@ class PromptLibrary {
 
       actions.appendChild(favoriteBtn);
       actions.appendChild(duplicateBtn);
+      actions.appendChild(convertBtn);
       actions.appendChild(deleteBtn);
     }
 
@@ -1361,6 +1398,14 @@ class PromptLibrary {
         });
       }
 
+      const convertBtn = promptEl.querySelector('.convert');
+      if (convertBtn) {
+        convertBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.convertPromptType(promptId);
+        });
+      }
+
       const deleteBtn = promptEl.querySelector('.delete');
       if (deleteBtn) {
         deleteBtn.addEventListener('click', (e) => {
@@ -1440,7 +1485,7 @@ class PromptLibrary {
    */
   showCreateModal() {
     this.editingPromptId = null;
-    this.showInlineEditor('New Prompt', '', '', [], [], false, false, 'project');
+    this.showInlineEditor('New Item', '', '', [], [], false, false, 'project', 'prompt');
   }
 
   /**
@@ -1452,15 +1497,17 @@ class PromptLibrary {
 
     this.editingPromptId = promptId;
     const promptContent = prompt.prompt || prompt.description || '';
+    const type = prompt.type === 'note' ? 'note' : 'prompt';
     this.showInlineEditor(
-      'Edit Prompt',
+      type === 'note' ? 'Edit Note' : 'Edit Prompt',
       promptContent,
       prompt.title || '',
       prompt.labels || [],
       prompt.images || [],
       prompt.reusable || false,
       prompt.isFavorite || false,
-      prompt.scope || 'project'
+      prompt.scope || 'project',
+      type
     );
   }
 
@@ -1782,9 +1829,11 @@ class PromptLibrary {
 
   /**
    * Build the options row (reusable, favorite, scope)
-   * @returns {{ element: HTMLElement, getValues: () => { reusable: boolean, favorite: boolean, scope: string } }}
+   * The reusable row is hidden for notes (they can't be reusable).
+   * @returns {{ element: HTMLElement, getValues: () => { reusable: boolean, favorite: boolean, scope: string }, setType: (type: string) => void }}
    */
-  buildOptionsRow(isReusable, isFavorite, scope) {
+  buildOptionsRow(isReusable, isFavorite, scope, initialType = 'prompt') {
+    let currentType = initialType === 'note' ? 'note' : 'prompt';
     const optionsRow = document.createElement('div');
     optionsRow.className = 'prompt-form-options';
 
@@ -1833,6 +1882,13 @@ class PromptLibrary {
     scopeSelect.appendChild(globalOption);
 
     const updateReusableForScope = () => {
+      // Notes can never be reusable — hide the row entirely.
+      if (currentType === 'note') {
+        reusableGroup.style.display = 'none';
+        reusableInput.checked = false;
+        return;
+      }
+      reusableGroup.style.display = '';
       if (scopeSelect.value === 'global') {
         reusableInput.checked = true;
         reusableInput.disabled = true;
@@ -1856,17 +1912,60 @@ class PromptLibrary {
     return {
       element: optionsRow,
       getValues: () => ({
-        reusable: reusableInput.checked,
+        // Notes can never be reusable regardless of checkbox state.
+        reusable: currentType === 'note' ? false : reusableInput.checked,
         favorite: favoriteInput.checked,
         scope: scopeSelect.value
-      })
+      }),
+      setType: (type) => {
+        currentType = type === 'note' ? 'note' : 'prompt';
+        updateReusableForScope();
+      }
+    };
+  }
+
+  /**
+   * Build the type selector (Prompt / Note toggle at the top of the editor).
+   * @returns {{ element: HTMLElement, getType: () => string, onChange: (cb: (type: string) => void) => void }}
+   */
+  buildTypeSelector(initialType = 'prompt') {
+    let currentType = initialType === 'note' ? 'note' : 'prompt';
+    const listeners = [];
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'prompt-form-type-selector';
+
+    const makeBtn = (value, label) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'prompt-form-type-btn' + (currentType === value ? ' active' : '');
+      btn.dataset.typeValue = value;
+      btn.textContent = label;
+      btn.addEventListener('click', () => {
+        if (currentType === value) return;
+        currentType = value;
+        wrapper.querySelectorAll('.prompt-form-type-btn').forEach(b => {
+          b.classList.toggle('active', b.dataset.typeValue === value);
+        });
+        listeners.forEach(fn => { try { fn(currentType); } catch {} });
+      });
+      return btn;
+    };
+
+    wrapper.appendChild(makeBtn('prompt', 'Prompt'));
+    wrapper.appendChild(makeBtn('note', 'Note'));
+
+    return {
+      element: wrapper,
+      getType: () => currentType,
+      onChange: (cb) => { if (typeof cb === 'function') listeners.push(cb); }
     };
   }
 
   /**
    * Show inline editor inside the prompt panel
    */
-  showInlineEditor(editorTitle, promptContent, promptTitle, labels, images, isReusable, isFavorite, scope) {
+  showInlineEditor(editorTitle, promptContent, promptTitle, labels, images, isReusable, isFavorite, scope, type = 'prompt') {
     // Close any existing inline editor first
     const existingEditor = this.panel.querySelector('.prompt-inline-editor');
     if (existingEditor) existingEditor.remove();
@@ -1970,16 +2069,37 @@ class PromptLibrary {
     promptGroup.appendChild(promptLabel);
     promptGroup.appendChild(promptInput);
 
+    // Type selector (Prompt / Note)
+    const typeHelper = this.buildTypeSelector(type);
+
     // Build helpers (labels, images, options)
     const labelsHelper = this.buildLabelsFormGroup(labels);
     const imagesHelper = this.buildImagesFormGroup(images, editor);
-    const optionsHelper = this.buildOptionsRow(isReusable, isFavorite, scope);
+    const optionsHelper = this.buildOptionsRow(isReusable, isFavorite, scope, typeHelper.getType());
 
+    body.appendChild(typeHelper.element);
     body.appendChild(titleGroup);
     body.appendChild(promptGroup);
     body.appendChild(labelsHelper.element);
     body.appendChild(imagesHelper.element);
     body.appendChild(optionsHelper.element);
+
+    // When the user switches type, update the header/prompt label + options visibility.
+    const applyTypeChange = (t) => {
+      const isNote = t === 'note';
+      if (editorTitle === 'New Item' || editorTitle === 'Edit Prompt' || editorTitle === 'Edit Note') {
+        titleEl.textContent = this.editingPromptId
+          ? (isNote ? 'Edit Note' : 'Edit Prompt')
+          : (isNote ? 'New Note' : 'New Prompt');
+      }
+      promptLabel.textContent = isNote ? 'Content' : 'Prompt';
+      promptInput.placeholder = isNote
+        ? 'Note content — saved commands, snippets, reference...'
+        : 'Enter the prompt to send to Claude...';
+      optionsHelper.setType(t);
+    };
+    typeHelper.onChange(applyTypeChange);
+    applyTypeChange(typeHelper.getType());
 
     // Footer with save/cancel
     const footer = document.createElement('div');
@@ -2042,13 +2162,14 @@ class PromptLibrary {
       const newLabels = labelsHelper.getCurrentLabels();
       const newImages = imagesHelper.getCurrentImages();
       const opts = optionsHelper.getValues();
+      const newType = typeHelper.getType();
 
       if (!newPromptContent) {
         promptInput.focus();
         return;
       }
 
-      await this.savePrompt(newPromptContent, newTitle, newLabels, newImages, opts.reusable, opts.favorite, opts.scope);
+      await this.savePrompt(newPromptContent, newTitle, newLabels, newImages, opts.reusable, opts.favorite, opts.scope, newType);
     };
 
     saveBtn.addEventListener('click', doSave);
@@ -2060,9 +2181,15 @@ class PromptLibrary {
       const newLabels = labelsHelper.getCurrentLabels();
       const newImages = imagesHelper.getCurrentImages();
       const opts = optionsHelper.getValues();
+      const newType = typeHelper.getType();
 
       if (!newPromptContent) {
         promptInput.focus();
+        return;
+      }
+      // Notes never get sent to the terminal; treat this as a plain save.
+      if (newType === 'note') {
+        await this.savePrompt(newPromptContent, newTitle, newLabels, newImages, opts.reusable, opts.favorite, opts.scope, newType);
         return;
       }
 
@@ -2076,7 +2203,8 @@ class PromptLibrary {
             images: newImages,
             reusable: opts.reusable,
             isFavorite: opts.favorite,
-            scope: opts.scope
+            scope: opts.scope,
+            type: newType
           });
           savedPrompt = { id: this.editingPromptId, prompt: newPromptContent, title: newTitle, images: newImages, reusable: opts.reusable };
         } else {
@@ -2087,7 +2215,8 @@ class PromptLibrary {
             images: newImages,
             reusable: opts.reusable,
             isFavorite: opts.favorite,
-            scope: opts.scope
+            scope: opts.scope,
+            type: newType
           });
         }
 
@@ -2125,10 +2254,14 @@ class PromptLibrary {
     // Update save button state
     const updateSaveBtn = () => {
       const hasContent = !!promptInput.value.trim();
+      const isNoteType = typeHelper.getType() === 'note';
       saveBtn.disabled = !hasContent;
-      saveAndSendBtn.disabled = !hasContent;
+      // Notes can't be sent to the terminal — hide Save & Send for them.
+      saveAndSendBtn.style.display = isNoteType ? 'none' : '';
+      saveAndSendBtn.disabled = !hasContent || isNoteType;
     };
     promptInput.addEventListener('input', updateSaveBtn);
+    typeHelper.onChange(updateSaveBtn);
     updateSaveBtn();
   }
 
@@ -2823,10 +2956,10 @@ class PromptLibrary {
   /**
    * Save prompt (create or update)
    */
-  async savePrompt(promptContent, title, labels, images, reusable, isFavorite, scope) {
+  async savePrompt(promptContent, title, labels, images, reusable, isFavorite, scope, type = 'prompt') {
     try {
+      const normalizedType = type === 'note' ? 'note' : 'prompt';
       if (this.editingPromptId) {
-        // Update existing prompt
         if (window.electronAPI?.promptLibrary?.updatePrompt) {
           await window.electronAPI.promptLibrary.updatePrompt(this.editingPromptId, {
             prompt: promptContent,
@@ -2835,11 +2968,11 @@ class PromptLibrary {
             images,
             reusable,
             isFavorite,
-            scope
+            scope,
+            type: normalizedType
           });
         }
       } else {
-        // Create new prompt
         if (window.electronAPI?.promptLibrary?.createPrompt) {
           await window.electronAPI.promptLibrary.createPrompt({
             prompt: promptContent,
@@ -2848,7 +2981,8 @@ class PromptLibrary {
             images,
             reusable,
             isFavorite,
-            scope
+            scope,
+            type: normalizedType
           });
         }
       }
@@ -2881,6 +3015,24 @@ class PromptLibrary {
     } catch (err) {
       console.error('Failed to delete prompt:', err);
       alert('Failed to delete prompt: ' + err.message);
+    }
+  }
+
+  /**
+   * Convert a prompt's type (prompt ↔ note). Notes lose lifecycle state.
+   */
+  async convertPromptType(promptId) {
+    const prompt = this.prompts.find(p => p.id === promptId);
+    if (!prompt) return;
+    const newType = prompt.type === 'note' ? 'prompt' : 'note';
+    try {
+      if (window.electronAPI?.promptLibrary?.updatePrompt) {
+        await window.electronAPI.promptLibrary.updatePrompt(promptId, { type: newType });
+        await this.loadPrompts();
+      }
+    } catch (err) {
+      console.error('Failed to convert type:', err);
+      alert('Failed to convert: ' + err.message);
     }
   }
 

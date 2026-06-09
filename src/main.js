@@ -1,4 +1,4 @@
-const { app, BrowserWindow, BrowserView, ipcMain, globalShortcut, Notification, Menu, dialog, session } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, globalShortcut, Notification, Menu, dialog, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -221,6 +221,7 @@ function createWindow() {
   firebaseSyncAdapter = new FirebaseSyncAdapter({
     store,
     promptLibraryManager,
+    promptImageManager,
     userDataPath: app.getPath('userData')
   });
 
@@ -284,7 +285,7 @@ function createWindow() {
     remoteSyncQueue.push(async () => {
       if (!promptLibraryManager) return;
 
-      const { id, projectId, scope, title, prompt, labels, isFavorite, reusable, done, testing, order } = remotePrompt;
+      const { id, projectId, scope, type, title, prompt, labels, images, isFavorite, reusable, done, testing, order } = remotePrompt;
 
       // Resolve projectId to cwd
       const cwd = await firebaseSyncAdapter.resolveProjectIdToCwd(projectId);
@@ -295,9 +296,11 @@ function createWindow() {
 
       const promptData = {
         id,
+        type: type === 'note' ? 'note' : 'prompt',
         title: title || '',
         prompt: prompt || '',
         labels: labels || [],
+        images: images || [],
         isFavorite: isFavorite || false,
         reusable: reusable || false,
         done: done || false,
@@ -312,6 +315,13 @@ function createWindow() {
         await promptLibraryManager.createPromptFromRemote(cwd, promptData);
       }
 
+      // Fire-and-forget download of any referenced images not present locally.
+      for (const img of promptData.images) {
+        if (img?.id && !promptImageManager.hasLocalImage(img.id)) {
+          firebaseSyncAdapter.downloadImageFromStorage(img.id, img.filename).catch(() => {});
+        }
+      }
+
       // Batch log applied changes
       remoteSyncAppliedCount++;
       clearTimeout(remoteSyncLogTimer);
@@ -323,6 +333,25 @@ function createWindow() {
 
     // Start processing queue
     processRemoteSyncQueue();
+  });
+
+  // Apply remote label registry changes locally
+  firebaseSyncAdapter.on('remote-labels-changed', ({ labels, labelColors }) => {
+    if (!promptLibraryManager) return;
+    const localLabels = promptLibraryManager.getLabels();
+    const localColors = promptLibraryManager.getLabelColors();
+    // If already matching, skip to avoid sync loops.
+    const sameList = localLabels.length === labels.length &&
+      localLabels.every((l, i) => l === labels[i]);
+    const sameColors = JSON.stringify(localColors) === JSON.stringify(labelColors);
+    if (sameList && sameColors) return;
+    promptLibraryManager.applyRemoteLabels(labels, labelColors);
+  });
+
+  // Push local label registry changes to Firebase
+  promptLibraryManager.on('labels-updated', ({ labels, labelColors }) => {
+    if (!firebaseSyncAdapter || !firebaseSyncAdapter.isSyncEnabled()) return;
+    firebaseSyncAdapter.pushLabelsToFirebase(labels, labelColors).catch(() => {});
   });
 
   firebaseSyncAdapter.on('remote-prompt-deleted', ({ id }) => {
@@ -489,6 +518,10 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     viewManager.destroy();
+    if (settingsView) {
+      try { settingsView.webContents.close(); } catch (e) { /* already closed */ }
+      settingsView = null;
+    }
     if (downloadManager) {
       downloadManager.destroy();
       downloadManager = null;
@@ -595,7 +628,7 @@ function switchToTab(tabId) {
 
   // Hide settings view if it's active
   if (settingsActive && settingsView) {
-    mainWindow.removeBrowserView(settingsView);
+    mainWindow.contentView.removeChildView(settingsView);
     settingsActive = false;
     mainWindow.webContents.send('settings-active-changed', false);
   }
@@ -626,8 +659,8 @@ function showServicePicker(isFirstTime = false) {
     return;
   }
 
-  // Create service picker as a BrowserView that fills the content area
-  const pickerView = new BrowserView({
+  // Create service picker as a WebContentsView that fills the content area
+  const pickerView = new WebContentsView({
     webPreferences: {
       preload: path.join(__dirname, 'service-picker-preload.js'),
       contextIsolation: true,
@@ -637,7 +670,7 @@ function showServicePicker(isFirstTime = false) {
   });
 
   servicePickerWindow = pickerView; // Store reference (reusing variable name)
-  mainWindow.addBrowserView(pickerView);
+  mainWindow.contentView.addChildView(pickerView);
 
   // Position to fill content area (right of sidebar)
   const [windowWidth, windowHeight] = mainWindow.getContentSize();
@@ -665,7 +698,8 @@ function showServicePicker(isFirstTime = false) {
  */
 function closeServicePicker() {
   if (servicePickerWindow && mainWindow) {
-    mainWindow.removeBrowserView(servicePickerWindow);
+    mainWindow.contentView.removeChildView(servicePickerWindow);
+    try { servicePickerWindow.webContents.close(); } catch (e) { /* already closed */ }
     servicePickerWindow = null;
   }
 }
@@ -997,6 +1031,22 @@ ipcMain.handle('firebase-logout', async () => {
   return { success: true };
 });
 
+ipcMain.handle('firebase-backfill-images', async () => {
+  if (!firebaseSyncAdapter || !firebaseSyncAdapter.isSyncEnabled()) {
+    return { success: false, error: 'Sync not enabled' };
+  }
+  try {
+    const result = await firebaseSyncAdapter.backfillLocalImages(({ done, total }) => {
+      if (settingsView && settingsView.webContents) {
+        settingsView.webContents.send('firebase-backfill-progress', { done, total });
+      }
+    });
+    return { success: true, ...result };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
 ipcMain.on('open-settings', () => {
   // If settings is already active, do nothing (it's already shown)
   if (settingsActive) {
@@ -1005,7 +1055,7 @@ ipcMain.on('open-settings', () => {
 
   // Create settings view if it doesn't exist
   if (!settingsView) {
-    settingsView = new BrowserView({
+    settingsView = new WebContentsView({
       webPreferences: {
         preload: path.join(__dirname, 'settings-preload.js'),
         contextIsolation: true,
@@ -1020,7 +1070,7 @@ ipcMain.on('open-settings', () => {
   viewManager.hideActiveView();
 
   // Show settings view
-  mainWindow.addBrowserView(settingsView);
+  mainWindow.contentView.addChildView(settingsView);
 
   // Position to fill content area (right of sidebar)
   const [windowWidth, windowHeight] = mainWindow.getContentSize();
@@ -1044,7 +1094,7 @@ function closeSettings() {
   if (!settingsActive || !settingsView || !mainWindow) return;
 
   // Hide settings view (but don't destroy it)
-  mainWindow.removeBrowserView(settingsView);
+  mainWindow.contentView.removeChildView(settingsView);
   settingsActive = false;
 
   // Show the previously active tab
@@ -1102,7 +1152,7 @@ ipcMain.handle('rename-tab', (event, tabId, newName) => {
   return renameTab(tabId, newName);
 });
 
-// Show rename dialog as a BrowserView overlay (like service picker)
+// Show rename dialog as a WebContentsView overlay (like service picker)
 let renameDialogView = null;
 let renameDialogTabId = null;
 
@@ -1116,8 +1166,8 @@ ipcMain.handle('show-rename-dialog', async (event, tabId) => {
 
   renameDialogTabId = tabId;
 
-  // Create as BrowserView (proven to work with IPC)
-  renameDialogView = new BrowserView({
+  // Create as WebContentsView (works with IPC)
+  renameDialogView = new WebContentsView({
     webPreferences: {
       preload: path.join(__dirname, 'rename-dialog-preload.js'),
       contextIsolation: true,
@@ -1126,7 +1176,7 @@ ipcMain.handle('show-rename-dialog', async (event, tabId) => {
     }
   });
 
-  mainWindow.addBrowserView(renameDialogView);
+  mainWindow.contentView.addChildView(renameDialogView);
 
   // Position to fill content area (right of sidebar)
   const [windowWidth, windowHeight] = mainWindow.getContentSize();
@@ -1149,7 +1199,8 @@ ipcMain.handle('show-rename-dialog', async (event, tabId) => {
 
 function closeRenameDialog() {
   if (renameDialogView && mainWindow) {
-    mainWindow.removeBrowserView(renameDialogView);
+    mainWindow.contentView.removeChildView(renameDialogView);
+    try { renameDialogView.webContents.close(); } catch (e) { /* already closed */ }
     renameDialogView = null;
     renameDialogTabId = null;
   }
@@ -1179,7 +1230,7 @@ ipcMain.handle('archive-tab', async (event, tabId) => {
   const activeTabId = viewManager.getActiveTabId();
   const tabIndex = tabManager.getTabIndex(tabId);
 
-  // Destroy the view (kills PTY for terminals, removes BrowserView)
+  // Destroy the view (kills PTY for terminals, removes WebContentsView)
   viewManager.destroyView(tabId);
 
   // Archive in TabManager (preserves tab metadata + tabData cwd)
@@ -1639,6 +1690,11 @@ ipcMain.handle('prompt-library-update', async (event, { terminalId, promptId, up
         const removedImages = existingPrompt.images.filter(img => !newImageIds.has(img.id));
         if (removedImages.length > 0) {
           await promptImageManager.removeImages(removedImages);
+          if (firebaseSyncAdapter) {
+            for (const img of removedImages) {
+              firebaseSyncAdapter.deleteImageFromStorage(img.id).catch(() => {});
+            }
+          }
         }
       }
     }
@@ -1665,6 +1721,11 @@ ipcMain.handle('prompt-library-delete', async (event, { terminalId, promptId }) 
     const prompt = promptLibraryManager.getPromptById(cwd, promptId);
     if (prompt && prompt.images && promptImageManager) {
       await promptImageManager.removeImages(prompt.images);
+      if (firebaseSyncAdapter) {
+        for (const img of prompt.images) {
+          firebaseSyncAdapter.deleteImageFromStorage(img.id).catch(() => {});
+        }
+      }
     }
     const deleted = await promptLibraryManager.deletePrompt(cwd, promptId);
     // Sync deletion to Firebase
@@ -1830,6 +1891,11 @@ ipcMain.handle('prompt-library-clear-done', async (event, { terminalId }) => {
       for (const prompt of donePrompts) {
         if (prompt.images) {
           await promptImageManager.removeImages(prompt.images);
+          if (firebaseSyncAdapter) {
+            for (const img of prompt.images) {
+              firebaseSyncAdapter.deleteImageFromStorage(img.id).catch(() => {});
+            }
+          }
         }
       }
     }

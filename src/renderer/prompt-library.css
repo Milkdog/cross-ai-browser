@@ -416,6 +416,21 @@
   color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
 }
 
+/* Note cards: collapse content preview to a single truncated line */
+.prompt-card.note .prompt-card-description,
+.prompt-card.note .prompt-card-description-only {
+  max-height: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.prompt-card.note .prompt-card-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 0;
+}
+
 /* Bottom action bar */
 .prompt-card-actions {
   display: flex;
@@ -1447,4 +1462,55 @@
 .prompt-inline-editor .prompt-form-hint {
   font-size: 10px;
   margin-bottom: 4px;
+}
+
+/* Type selector (Prompt / Note toggle at top of editor) */
+.prompt-form-type-selector {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--color-bg-base, #141418);
+  border: 1px solid var(--color-border-default, #3c3c42);
+  border-radius: var(--radius-md, 6px);
+  align-self: flex-start;
+}
+
+.prompt-form-type-btn {
+  appearance: none;
+  background: transparent;
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
+  border: none;
+  padding: 4px 12px;
+  font-size: var(--font-size-sm, 11px);
+  font-weight: 500;
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+  transition: background 150ms, color 150ms;
+}
+
+.prompt-form-type-btn:hover {
+  color: var(--color-text-primary, #ffffff);
+}
+
+.prompt-form-type-btn.active {
+  background: var(--color-primary-base, #6366f1);
+  color: #ffffff;
+}
+
+/* Note-type cards: subtle visual differentiation */
+.prompt-card.note {
+  border-left: 3px solid var(--color-status-info, #0ea5e9);
+}
+
+/* Notes section header — match info/note color accent */
+.prompt-section-notes .prompt-section-title {
+  color: var(--color-status-info, #0ea5e9);
+}
+
+/* Convert action button in card action bar */
+.prompt-card-action.convert {
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
+}
+.prompt-card-action.convert:hover {
+  color: var(--color-primary-base, #6366f1);
 }

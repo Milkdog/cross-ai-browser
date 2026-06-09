@@ -192,6 +192,10 @@ class StreamingDetector {
     this.debounceTimer = null;
     this.lastStreamingState = false;
     this.debug = false;
+
+    // Growth-based detection state (Gemini fallback)
+    this._lastResponseLength = 0;
+    this._lastResponseGrowthAt = 0;
   }
 
   log(...args) {
@@ -249,6 +253,18 @@ class StreamingDetector {
         const buttons = document.querySelectorAll('button[aria-label]');
         const ariaLabels = Array.from(buttons).map(b => b.getAttribute('aria-label')).filter(Boolean);
         this.log('ChatGPT diagnostic - stopBtn:', !!stopBtn, 'streaming:', this.isStreaming, 'aria-labels:', ariaLabels.slice(0, 5));
+      } else if (this.serviceId === 'gemini') {
+        const buttons = document.querySelectorAll('button');
+        const ariaLabels = Array.from(buttons)
+          .map(b => b.getAttribute('aria-label'))
+          .filter(Boolean);
+        const lastResponse = document.querySelector('.model-response-text, [class*="response-content"], message-content, model-response');
+        this.log(
+          'Gemini diagnostic - streaming:', this.isStreaming,
+          '| aria-labels (first 10):', ariaLabels.slice(0, 10),
+          '| lastResponse tag:', lastResponse?.tagName,
+          '| lastResponse len:', lastResponse?.textContent?.length
+        );
       }
     }, 10000);
 
@@ -462,31 +478,95 @@ class StreamingDetector {
   }
 
   detectGeminiStreaming() {
-    // Method 1: Stop button (most reliable)
-    const stopBtn = document.querySelector('[aria-label="Stop"]');
-    if (stopBtn && stopBtn.offsetParent !== null) {
-      this.log('Detected: Stop button');
-      return true;
-    }
-
-    // Method 2: Look for visible button with "Stop" text
-    const buttons = document.querySelectorAll('button');
+    // Method 1: Any visible button whose aria-label / mattooltip / title / text contains "stop"
+    // Gemini uses Angular Material with various label conventions ("Stop response", "Stop generating", etc.)
+    const buttons = document.querySelectorAll('button, [role="button"]');
     for (const btn of buttons) {
-      const ariaLabel = btn.getAttribute('aria-label') || '';
-      const text = btn.textContent || '';
-      if ((ariaLabel.toLowerCase() === 'stop' || text.toLowerCase() === 'stop') &&
-          btn.offsetParent !== null) {
-        this.log('Detected: Stop button by text');
+      if (btn.offsetParent === null) continue;
+      const label = (
+        (btn.getAttribute('aria-label') || '') + ' ' +
+        (btn.getAttribute('mattooltip') || '') + ' ' +
+        (btn.getAttribute('data-mat-tooltip') || '') + ' ' +
+        (btn.getAttribute('title') || '') + ' ' +
+        (btn.textContent || '')
+      ).toLowerCase();
+      if (/\bstop\b/.test(label) && !/stopped|autostop/.test(label)) {
+        this.log('Detected: button with stop label:', label.trim().slice(0, 80));
         return true;
       }
     }
 
-    // Method 3: Look for specific Gemini streaming indicator
-    // Gemini shows a loading animation while generating
-    const loadingSpinner = document.querySelector('[data-test-id="loading"]');
-    if (loadingSpinner) {
-      this.log('Detected: loading spinner');
-      return true;
+    // Method 2: Stop icon — Google Material stop icon is often rendered as
+    // <mat-icon>stop</mat-icon> or <mat-icon fonticon="stop">. Look for any visible one.
+    const matIcons = document.querySelectorAll('mat-icon, [class*="mat-icon"]');
+    for (const icon of matIcons) {
+      if (icon.offsetParent === null) continue;
+      const fonticon = icon.getAttribute('fonticon') || '';
+      const text = (icon.textContent || '').trim();
+      if (fonticon === 'stop' || text === 'stop') {
+        // Make sure it's in the composer/input area (not elsewhere in the app)
+        const inComposer = icon.closest('input-area, [class*="input-area"], [class*="composer"], form');
+        if (inComposer) {
+          this.log('Detected: mat-icon stop in composer');
+          return true;
+        }
+      }
+    }
+
+    // Method 3 removed: Angular Material progress indicators are persistent in Gemini's
+    // response area even when idle, causing false positives. Stop button (Method 1) is
+    // the authoritative signal — it disappears as soon as generation completes.
+
+    // Method 4: Gemini tag-based elements specific to streaming/loading state
+    // The Gemini web app uses custom Angular components like <model-response>, <response-container>
+    const streamingHosts = document.querySelectorAll(
+      'model-response[loading], ' +
+      'response-container[loading], ' +
+      '[ng-reflect-is-loading="true"], ' +
+      '[class*="response-loading"], ' +
+      '[class*="is-loading"]:not([class*="is-loaded"])'
+    );
+    for (const el of streamingHosts) {
+      if (el.offsetParent !== null) {
+        this.log('Detected: Gemini custom element with loading/streaming attribute');
+        return true;
+      }
+    }
+
+    // Method 5: Growth-based detection (framework-agnostic fallback)
+    // If the last model response is actively gaining text, it's streaming.
+    const responseSelectors = [
+      '.model-response-text',
+      'model-response',
+      'message-content',
+      '[class*="response-content"]',
+      '.markdown-content'
+    ];
+    let lastResponse = null;
+    for (const sel of responseSelectors) {
+      const els = document.querySelectorAll(sel);
+      if (els.length > 0) {
+        lastResponse = els[els.length - 1];
+        break;
+      }
+    }
+    if (lastResponse) {
+      const len = (lastResponse.textContent || '').length;
+      const now = Date.now();
+      if (len > this._lastResponseLength) {
+        this._lastResponseGrowthAt = now;
+        this._lastResponseLength = len;
+        this.log('Detected: response is growing (len:', len, ')');
+        return true;
+      }
+      // Treat as streaming if we saw growth in the last 1.5s and length hasn't shrunk
+      if (now - this._lastResponseGrowthAt < 1500 && len === this._lastResponseLength) {
+        return true;
+      }
+      // Length decreased or new response — reset baseline
+      if (len < this._lastResponseLength) {
+        this._lastResponseLength = len;
+      }
     }
 
     return false;
@@ -528,6 +608,11 @@ class StreamingDetector {
 
 // Initialize detector
 const detector = new StreamingDetector();
+// Enable debug logs for Gemini — detection is fragile; logs help diagnose selector drift.
+// Open DevTools on the Gemini webview to see them.
+if (getServiceId() === 'gemini') {
+  detector.debug = true;
+}
 detector.init();
 
 // Webview preload initialized

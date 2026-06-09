@@ -14,9 +14,9 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "electron": "^33.0.0",
-    "electron-builder": "^25.0.0",
-    "electron-rebuild": "^3.2.9",
+    "electron": "^40.0.0",
+    "electron-builder": "^26.0.0",
+    "@electron/rebuild": "^4.0.0",
     "icon-gen": "^5.0.0"
   },
   "build": {
@@ -53,6 +53,6 @@
     "xterm-addon-fit": "^0.8.0"
   },
   "optionalDependencies": {
-    "node-pty": "^1.0.0"
+    "node-pty": "^1.1.0"
   }
 }

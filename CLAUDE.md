@@ -230,6 +230,19 @@ A Progressive Web App for managing prompts from iPhone or any device, synced via
 - Auto-merge conflict resolution (union for arrays, newer wins for content)
 - Images stored in Firebase Storage per user
 
+## Secrets Store
+Encrypted secrets/API keys at global and project scope, injected as environment
+variables into Claude Code terminal PTYs at spawn (project overrides global).
+
+- `src/core/SecretsManager.js` — storage, CRUD, validation, merged-env
+- Files: `~/Library/Application Support/Cross AI Browser/secrets/global.enc` and
+  `<cwd-hash>.enc`, encrypted via Electron `safeStorage` (Keychain-backed)
+- Local-only: never synced to Firebase
+- UI: SECRETS section in the library panel (masked values; reveal/copy on demand)
+- IPC list responses never contain values — only `secrets-reveal` returns one
+- No plaintext fallback: writes refused if `safeStorage` is unavailable
+- Tests: `test/secrets-manager.test.js` (plain Node, injected fake encryptor)
+
 ## Commands
 - `npm start` - Run in development
 - `npm run build` - Build distributable .app/.dmg
@@ -264,6 +277,7 @@ src/
 │   ├── PromptLibraryManager.js # Prompt CRUD and organization
 │   ├── PromptImageManager.js  # Image storage and clipboard
 │   ├── PromptStorageEngine.js # Prompt file I/O
+│   ├── SecretsManager.js      # Encrypted secrets store (global + project env vars)
 │   ├── FirebaseSyncAdapter.js # Firebase bidirectional sync
 │   └── history/
 │       ├── StorageEngine.js   # File I/O for history

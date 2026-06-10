@@ -39,8 +39,9 @@ class SecretsManager {
   constructor({ userDataPath, encryptor }) {
     this.baseDir = path.join(userDataPath, 'secrets');
     this.encryptor = encryptor || createSafeStorageEncryptor();
+    this._warnedUnavailable = false;
     if (!fs.existsSync(this.baseDir)) {
-      fs.mkdirSync(this.baseDir, { recursive: true });
+      fs.mkdirSync(this.baseDir, { recursive: true, mode: 0o700 });
     }
   }
 
@@ -76,17 +77,28 @@ class SecretsManager {
 
     // Never treat an undecryptable-because-locked store as corrupt.
     if (!this.isEncryptionAvailable()) {
-      console.warn('[SecretsManager] Secure storage unavailable — secrets cannot be read');
+      if (!this._warnedUnavailable) {
+        this._warnedUnavailable = true;
+        console.warn('[SecretsManager] Secure storage unavailable — secrets cannot be read');
+      }
+      return { version: 1, secrets: [] };
+    }
+
+    let buffer;
+    try {
+      buffer = fs.readFileSync(filePath);
+    } catch (err) {
+      // Transient I/O failure is not corruption — leave the file alone.
+      console.error(`[SecretsManager] Cannot read secrets file ${filePath} (${err.code || err.name})`);
       return { version: 1, secrets: [] };
     }
 
     try {
-      const buffer = fs.readFileSync(filePath);
       const doc = JSON.parse(this.encryptor.decrypt(buffer));
       if (!doc || !Array.isArray(doc.secrets)) throw new Error('Malformed secrets document');
       return doc;
     } catch (err) {
-      console.error(`[SecretsManager] Corrupt secrets file ${filePath}: ${err.message} — backing up and starting fresh`);
+      console.error(`[SecretsManager] Corrupt secrets file ${filePath} (${err.name}) — backing up and starting fresh`);
       try {
         fs.renameSync(filePath, `${filePath}.corrupt`);
       } catch {
@@ -104,7 +116,7 @@ class SecretsManager {
     const tempPath = `${filePath}.tmp`;
     const encrypted = this.encryptor.encrypt(JSON.stringify(doc));
     try {
-      await fs.promises.writeFile(tempPath, encrypted);
+      await fs.promises.writeFile(tempPath, encrypted, { mode: 0o600 });
       await fs.promises.rename(tempPath, filePath);
     } catch (err) {
       try {

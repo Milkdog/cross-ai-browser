@@ -33,6 +33,7 @@ class PromptLibrary {
     this.secrets = [];           // metadata only — never values
     this.secretsAvailable = true;
     this.secretsEditing = null;  // null | 'new' | secret id
+    this._secretFormDraft = null; // captured draft while re-rendering
     this.searchQuery = '';
     this.testingTimerInterval = null;
     this.isInlineEditing = false;
@@ -255,10 +256,17 @@ class PromptLibrary {
 
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
-      // Escape to close inline editor or modal
+      // Escape to close inline editor, secret form, or modal
       if (e.key === 'Escape') {
         if (this.isInlineEditing) {
           this.closeInlineEditor();
+          e.stopPropagation();
+          return;
+        }
+        if (this.secretsEditing) {
+          this.secretsEditing = null;
+          this._secretFormDraft = null;
+          this.renderPrompts();
           e.stopPropagation();
           return;
         }
@@ -581,6 +589,8 @@ class PromptLibrary {
       if (this.resizeDivider) {
         this.resizeDivider.style.display = 'none';
       }
+      // Re-render on hide so any revealed secret values get re-masked
+      this.renderPrompts();
     }
   }
 
@@ -711,6 +721,9 @@ class PromptLibrary {
    */
   renderPrompts() {
     if (!this.promptsContainer) return;
+
+    // Capture any in-progress secret form draft before clearing the container
+    this.captureSecretFormDraft();
 
     // Clear any existing timer
     if (this.testingTimerInterval) {
@@ -3108,6 +3121,26 @@ class PromptLibrary {
     }
   }
 
+  /**
+   * Capture any in-progress secret form inputs before re-render wipes the DOM.
+   * Stored in this._secretFormDraft and restored by createSecretForm().
+   */
+  captureSecretFormDraft() {
+    if (!this.secretsEditing) return;
+    const form = this.promptsContainer && this.promptsContainer.querySelector('.secret-form');
+    if (!form) return;
+    const nameInput = form.querySelector('.secret-form-name');
+    const valueInput = form.querySelector('.secret-form-value');
+    const noteInput = form.querySelector('.secret-form-note');
+    const enabledCheck = form.querySelector('.secret-form-enabled input[type="checkbox"]');
+    this._secretFormDraft = {
+      name: nameInput ? nameInput.value : '',
+      value: valueInput ? valueInput.value : '',
+      note: noteInput ? noteInput.value : '',
+      enabled: enabledCheck ? enabledCheck.checked : true
+    };
+  }
+
   /** Refresh secrets metadata from the main process. */
   async loadSecrets() {
     try {
@@ -3144,6 +3177,10 @@ class PromptLibrary {
     addBtn.className = 'secrets-add-btn';
     addBtn.textContent = '+';
     addBtn.title = 'Add secret';
+    if (!this.secretsAvailable) {
+      addBtn.disabled = true;
+      addBtn.title = 'Secure storage unavailable';
+    }
     addBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       this.secretsCollapsed = false;
@@ -3227,21 +3264,34 @@ class PromptLibrary {
     actions.className = 'secret-actions';
 
     let revealed = false;
+    let autoMaskTimer = null;
     const revealBtn = document.createElement('button');
     revealBtn.className = 'secret-action-btn';
     revealBtn.textContent = '👁';
     revealBtn.title = 'Reveal';
     revealBtn.addEventListener('click', async () => {
       if (revealed) {
+        clearTimeout(autoMaskTimer);
+        autoMaskTimer = null;
         valueEl.textContent = '••••••••';
         revealed = false;
         return;
       }
       const result = await window.electronAPI.secrets.reveal(secret.scope, secret.id);
-      if (result.value != null) {
-        valueEl.textContent = result.value;
-        revealed = true;
+      if (result.error || result.value == null) {
+        valueEl.textContent = 'unavailable';
+        return;
       }
+      valueEl.textContent = result.value;
+      revealed = true;
+      // Auto-re-mask after 30 seconds
+      autoMaskTimer = setTimeout(() => {
+        if (revealed) {
+          valueEl.textContent = '••••••••';
+          revealed = false;
+        }
+        autoMaskTimer = null;
+      }, 30000);
     });
 
     const copyBtn = document.createElement('button');
@@ -3250,11 +3300,14 @@ class PromptLibrary {
     copyBtn.title = 'Copy value';
     copyBtn.addEventListener('click', async () => {
       const result = await window.electronAPI.secrets.reveal(secret.scope, secret.id);
-      if (result.value != null) {
-        await navigator.clipboard.writeText(result.value);
-        copyBtn.textContent = '✓';
+      if (result.error || result.value == null) {
+        copyBtn.textContent = '!';
         setTimeout(() => { copyBtn.textContent = '📋'; }, 1200);
+        return;
       }
+      await navigator.clipboard.writeText(result.value);
+      copyBtn.textContent = '✓';
+      setTimeout(() => { copyBtn.textContent = '📋'; }, 1200);
     });
 
     const editBtn = document.createElement('button');
@@ -3272,7 +3325,11 @@ class PromptLibrary {
     deleteBtn.title = 'Delete';
     deleteBtn.addEventListener('click', async () => {
       if (!confirm(`Delete secret "${secret.name}"?`)) return;
-      await window.electronAPI.secrets.remove(secret.scope, secret.id);
+      const result = await window.electronAPI.secrets.remove(secret.scope, secret.id);
+      if (result && result.error) {
+        alert(result.error);
+        return;
+      }
       await this.loadSecrets();
       this.renderPrompts();
     });
@@ -3293,19 +3350,19 @@ class PromptLibrary {
     form.className = 'secret-form';
 
     const nameInput = document.createElement('input');
-    nameInput.className = 'secret-form-input';
+    nameInput.className = 'secret-form-input secret-form-name';
     nameInput.placeholder = 'NAME (e.g. OPENAI_API_KEY)';
     nameInput.spellcheck = false;
     if (existing) nameInput.value = existing.name;
 
     const valueInput = document.createElement('input');
-    valueInput.className = 'secret-form-input';
+    valueInput.className = 'secret-form-input secret-form-value';
     valueInput.type = 'password';
     valueInput.placeholder = existing ? 'Value (leave blank to keep current)' : 'Value';
     valueInput.spellcheck = false;
 
     const noteInput = document.createElement('input');
-    noteInput.className = 'secret-form-input';
+    noteInput.className = 'secret-form-input secret-form-note';
     noteInput.placeholder = 'Note (optional)';
     if (existing && existing.note) noteInput.value = existing.note;
 
@@ -3332,6 +3389,14 @@ class PromptLibrary {
     enabledCheck.checked = existing ? existing.enabled : true;
     enabledLabel.appendChild(enabledCheck);
     enabledLabel.appendChild(document.createTextNode(' Inject into new terminals'));
+
+    // Restore draft values captured before the last re-render (takes priority over existing prefill)
+    if (this._secretFormDraft) {
+      nameInput.value = this._secretFormDraft.name;
+      valueInput.value = this._secretFormDraft.value;
+      noteInput.value = this._secretFormDraft.note;
+      enabledCheck.checked = this._secretFormDraft.enabled;
+    }
 
     optionsRow.appendChild(scopeSelect);
     optionsRow.appendChild(enabledLabel);
@@ -3366,6 +3431,7 @@ class PromptLibrary {
         return;
       }
       this.secretsEditing = null;
+      this._secretFormDraft = null;
       await this.loadSecrets();
       this.renderPrompts();
       this.showSecretsHint();
@@ -3376,6 +3442,7 @@ class PromptLibrary {
     cancelBtn.textContent = 'Cancel';
     cancelBtn.addEventListener('click', () => {
       this.secretsEditing = null;
+      this._secretFormDraft = null;
       this.renderPrompts();
     });
 

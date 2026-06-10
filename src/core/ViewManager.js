@@ -71,7 +71,7 @@ class ViewManager {
    * @param {HooksManager} options.hooksManager - Optional hooks manager for Claude Code hooks
    * @param {FirebaseSyncAdapter} options.firebaseSyncAdapter - Optional Firebase sync adapter
    */
-  constructor({ mainWindow, store, getSidebarWidth, onTabsChanged, onTerminalComplete, historyManager, hooksManager, firebaseSyncAdapter }) {
+  constructor({ mainWindow, store, getSidebarWidth, onTabsChanged, onTerminalComplete, historyManager, hooksManager, firebaseSyncAdapter, secretsManager }) {
     this.mainWindow = mainWindow;
     this.store = store;
     this.getSidebarWidth = getSidebarWidth || (() => DEFAULT_SIDEBAR_WIDTH);
@@ -80,6 +80,7 @@ class ViewManager {
     this.historyManager = historyManager;
     this.hooksManager = hooksManager;
     this.firebaseSyncAdapter = firebaseSyncAdapter;
+    this.secretsManager = secretsManager;
 
     // View storage
     this.webViews = new Map();      // tabId -> WebContentsView
@@ -865,6 +866,16 @@ class ViewManager {
       }
 
       env.PATH = `${additionalPaths.join(':')}:${env.PATH || '/usr/bin:/bin'}`;
+    }
+
+    // Inject enabled secrets (global + project, project wins) as env vars.
+    // New terminals only; a decrypt failure must never block terminal launch.
+    if (this.secretsManager) {
+      try {
+        Object.assign(env, this.secretsManager.getMergedEnv(cwd));
+      } catch (err) {
+        console.warn('[ViewManager] Failed to load secrets for terminal env:', err.message);
+      }
     }
 
     try {

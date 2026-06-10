@@ -20,6 +20,7 @@ const TerminalThemes = require('./core/TerminalThemes');
 const HooksManager = require('./core/HooksManager');
 const McpPromptServer = require('./core/McpPromptServer');
 const FirebaseSyncAdapter = require('./core/FirebaseSyncAdapter');
+const SecretsManager = require('./core/SecretsManager');
 
 // Firebase configuration (hardcoded for prompt-library-pwa project)
 const FIREBASE_CONFIG = {
@@ -90,6 +91,7 @@ let historyManager = null;
 let hooksManager = null;
 let promptLibraryManager = null;
 let promptImageManager = null;
+let secretsManager = null;
 let firebaseSyncAdapter = null;
 let mcpPromptServer = null;
 let settingsView = null;
@@ -202,6 +204,9 @@ function createWindow() {
 
   // Initialize PromptImageManager
   promptImageManager = new PromptImageManager(app.getPath('userData'));
+
+  // Initialize SecretsManager (encrypted env vars for terminals)
+  secretsManager = new SecretsManager({ userDataPath: app.getPath('userData') });
 
   // Initialize MCP Prompt Server for Claude Code integration
   mcpPromptServer = new McpPromptServer({
@@ -466,7 +471,8 @@ function createWindow() {
     },
     historyManager,
     hooksManager,
-    firebaseSyncAdapter
+    firebaseSyncAdapter,
+    secretsManager
   });
 
   // Initialize DownloadManager with shared session
@@ -2052,6 +2058,62 @@ ipcMain.handle('prompt-image-pick-files', async () => {
   } catch (err) {
     console.error('Failed to show file picker:', err);
     return { canceled: true };
+  }
+});
+
+// === Secrets Store IPC (terminal windows only, via terminal-preload) ===
+// Load-bearing rule: list responses never contain secret values.
+// Values cross IPC solely via secrets-reveal.
+
+function getTerminalCwd(terminalId) {
+  return store.get(`tabData.${terminalId}.cwd`) || null;
+}
+
+ipcMain.handle('secrets-list', (event, { terminalId }) => {
+  if (!secretsManager) return { available: false, secrets: [] };
+  const cwd = getTerminalCwd(terminalId);
+  return {
+    available: secretsManager.isEncryptionAvailable(),
+    secrets: [
+      ...secretsManager.list('global'),
+      ...(cwd ? secretsManager.list('project', cwd) : [])
+    ]
+  };
+});
+
+ipcMain.handle('secrets-create', async (event, { terminalId, scope, secret }) => {
+  if (!secretsManager) return { error: 'Secrets store unavailable' };
+  try {
+    return { secret: await secretsManager.create(scope, getTerminalCwd(terminalId), secret) };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('secrets-update', async (event, { terminalId, scope, id, updates }) => {
+  if (!secretsManager) return { error: 'Secrets store unavailable' };
+  try {
+    return { secret: await secretsManager.update(scope, getTerminalCwd(terminalId), id, updates) };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('secrets-delete', async (event, { terminalId, scope, id }) => {
+  if (!secretsManager) return { error: 'Secrets store unavailable' };
+  try {
+    return { deleted: await secretsManager.delete(scope, getTerminalCwd(terminalId), id) };
+  } catch (err) {
+    return { error: err.message };
+  }
+});
+
+ipcMain.handle('secrets-reveal', (event, { terminalId, scope, id }) => {
+  if (!secretsManager) return { error: 'Secrets store unavailable' };
+  try {
+    return { value: secretsManager.reveal(scope, getTerminalCwd(terminalId), id) };
+  } catch (err) {
+    return { error: err.message };
   }
 });
 

@@ -17,6 +17,7 @@ An Electron app that provides a unified tabbed interface for AI chat services (C
 - `ServiceRegistry.js` - Defines available service types (ChatGPT, Claude, Gemini, Claude Code)
 - `TabManager.js` - Manages tab state, persistence, ordering, and naming
 - `ViewManager.js` - Handles WebContentsView lifecycle, switching, and terminal streaming detection
+- `UsageMonitor.js` - Polls the Anthropic OAuth usage API for the terminal usage bars (token reading, backoff, parsing)
 - `DownloadManager.js` - Manages file downloads with thumbnails and history
 - `HistoryManager.js` - Coordinates terminal session history capture and retention
 - `TerminalThemes.js` - Terminal color theme definitions
@@ -271,6 +272,7 @@ src/
 │   ├── ServiceRegistry.js     # Service type definitions
 │   ├── TabManager.js          # Tab state management
 │   ├── ViewManager.js         # WebContentsView management, streaming detection
+│   ├── UsageMonitor.js        # OAuth usage API polling for terminal usage bars
 │   ├── DownloadManager.js     # Download management
 │   ├── HistoryManager.js      # Terminal session history coordinator
 │   ├── TerminalThemes.js      # Terminal color themes

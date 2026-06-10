@@ -1514,3 +1514,179 @@
 .prompt-card-action.convert:hover {
   color: var(--color-primary-base, #6366f1);
 }
+
+/* === Secrets section === */
+.secrets-add-btn {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.secrets-add-btn:hover {
+  color: var(--color-text-primary, #ffffff);
+}
+
+.secret-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  background: var(--color-bg-card, #2a2a32);
+  border: 1px solid var(--color-border-subtle, #2e2e34);
+  border-radius: var(--radius-md, 6px);
+  margin-bottom: 4px;
+}
+.secret-row.secret-disabled {
+  opacity: 0.5;
+}
+
+.secret-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.secret-name {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--color-text-primary, #ffffff);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.secret-scope {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 4px;
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
+  background: var(--color-bg-elevated, #252530);
+}
+.secret-scope-project {
+  color: var(--color-semantic-project, #818cf8);
+}
+
+.secret-value {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 80px;
+}
+
+.secret-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.secret-action-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px;
+  opacity: 0.6;
+}
+.secret-action-btn:hover {
+  opacity: 1;
+}
+
+.secret-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  background: var(--color-bg-elevated, #252530);
+  border: 1px solid var(--color-border-default, #3c3c42);
+  border-radius: var(--radius-md, 6px);
+  margin-bottom: 4px;
+}
+
+.secret-form-input,
+.secret-form-select {
+  background: var(--color-bg-input, #1a1a1f);
+  border: 1px solid var(--color-border-default, #3c3c42);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text-primary, #ffffff);
+  font-size: 11px;
+  padding: 4px 6px;
+}
+.secret-form-input:focus,
+.secret-form-select:focus {
+  outline: none;
+  border-color: var(--color-border-focus, #6366f1);
+}
+
+.secret-form-options {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.secret-form-enabled {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
+}
+
+.secret-form-error {
+  color: var(--color-status-error, #ef4444);
+  font-size: 10px;
+  min-height: 12px;
+}
+
+.secret-form-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.secret-form-save {
+  background: var(--color-primary-base, #6366f1);
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text-primary, #ffffff);
+  font-size: 11px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.secret-form-save:hover {
+  background: var(--color-primary-hover, #818cf8);
+}
+
+.secret-form-cancel {
+  background: none;
+  border: 1px solid var(--color-border-default, #3c3c42);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
+  font-size: 11px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.secrets-empty,
+.secrets-unavailable {
+  font-size: 11px;
+  color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
+  padding: 8px;
+}
+.secrets-unavailable {
+  color: var(--color-status-warning, #f59e0b);
+}
+
+.secrets-hint {
+  font-size: 10px;
+  color: var(--color-status-info, #3b82f6);
+  padding: 4px 8px;
+}

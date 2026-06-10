@@ -29,6 +29,10 @@ class PromptLibrary {
     this.reusableCollapsed = false;
     this.regularCollapsed = false;
     this.notesCollapsed = false;
+    this.secretsCollapsed = true;
+    this.secrets = [];           // metadata only — never values
+    this.secretsAvailable = true;
+    this.secretsEditing = null;  // null | 'new' | secret id
     this.searchQuery = '';
     this.testingTimerInterval = null;
     this.isInlineEditing = false;
@@ -203,6 +207,7 @@ class PromptLibrary {
     // Load initial state
     await this.loadPanelState();
     await this.loadPrompts();
+    await this.loadSecrets();
 
     // Listen for prompt updates from other terminals
     if (window.electronAPI?.promptLibrary?.onPromptsUpdated) {
@@ -789,6 +794,7 @@ class PromptLibrary {
       emptyState.appendChild(icon);
       emptyState.appendChild(text);
       this.promptsContainer.appendChild(emptyState);
+      this.promptsContainer.appendChild(this.renderSecretsSection());
       return;
     }
 
@@ -827,6 +833,9 @@ class PromptLibrary {
       const doneSection = this.createDoneSection(donePrompts);
       this.promptsContainer.appendChild(doneSection);
     }
+
+    // 6. Secrets section (always rendered — it is the only entry point for adding secrets)
+    this.promptsContainer.appendChild(this.renderSecretsSection());
 
     // Set up prompt event listeners
     this.setupPromptEventListeners();
@@ -3097,6 +3106,301 @@ class PromptLibrary {
       console.error('Failed to reorder prompts:', err);
       await this.loadPrompts();
     }
+  }
+
+  /** Refresh secrets metadata from the main process. */
+  async loadSecrets() {
+    try {
+      const result = await window.electronAPI.secrets.list();
+      this.secrets = result.secrets || [];
+      this.secretsAvailable = result.available !== false;
+    } catch (err) {
+      console.error('Failed to load secrets:', err);
+      this.secrets = [];
+    }
+  }
+
+  /**
+   * Build the SECRETS section: header with add button, masked rows, inline
+   * add/edit form. Secrets are not draggable and never join prompt search
+   * by value — only name matching below.
+   */
+  renderSecretsSection() {
+    const section = document.createElement('div');
+    section.className = 'prompt-section secrets-section';
+
+    const header = document.createElement('div');
+    header.className = 'prompt-section-header';
+
+    const toggle = document.createElement('button');
+    toggle.className = 'prompt-section-toggle';
+    toggle.textContent = this.secretsCollapsed ? '▶' : '▼';
+
+    const titleEl = document.createElement('span');
+    titleEl.className = 'prompt-section-title';
+    titleEl.textContent = `SECRETS (${this.secrets.length})`;
+
+    const addBtn = document.createElement('button');
+    addBtn.className = 'secrets-add-btn';
+    addBtn.textContent = '+';
+    addBtn.title = 'Add secret';
+    addBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.secretsCollapsed = false;
+      this.secretsEditing = 'new';
+      this.renderPrompts();
+    });
+
+    header.appendChild(toggle);
+    header.appendChild(titleEl);
+    header.appendChild(addBtn);
+
+    const body = document.createElement('div');
+    body.className = 'prompt-section-cards';
+    if (this.secretsCollapsed) body.style.display = 'none';
+
+    if (!this.secretsAvailable) {
+      const warn = document.createElement('div');
+      warn.className = 'secrets-unavailable';
+      warn.textContent = 'Secure storage is unavailable on this system — secrets are disabled.';
+      body.appendChild(warn);
+    } else {
+      if (this.secretsEditing === 'new') {
+        body.appendChild(this.createSecretForm(null));
+      }
+      const query = (this.searchQuery || '').toLowerCase();
+      const visible = query
+        ? this.secrets.filter(s => s.name.toLowerCase().includes(query))
+        : this.secrets;
+      visible.forEach(secret => {
+        if (this.secretsEditing === secret.id) {
+          body.appendChild(this.createSecretForm(secret));
+        } else {
+          body.appendChild(this.createSecretRow(secret));
+        }
+      });
+      if (visible.length === 0 && this.secretsEditing !== 'new') {
+        const empty = document.createElement('div');
+        empty.className = 'secrets-empty';
+        empty.textContent = query ? 'No secrets match.' : 'No secrets yet. Click + to add one.';
+        body.appendChild(empty);
+      }
+    }
+
+    header.addEventListener('click', () => {
+      this.secretsCollapsed = !this.secretsCollapsed;
+      this.renderPrompts();
+    });
+
+    section.appendChild(header);
+    section.appendChild(body);
+    return section;
+  }
+
+  /** One masked secret row: name, scope chip, dots, reveal/copy/edit/delete. */
+  createSecretRow(secret) {
+    const row = document.createElement('div');
+    row.className = 'secret-row' + (secret.enabled ? '' : ' secret-disabled');
+
+    const info = document.createElement('div');
+    info.className = 'secret-info';
+
+    const nameEl = document.createElement('span');
+    nameEl.className = 'secret-name';
+    nameEl.textContent = secret.name;
+    if (secret.note) nameEl.title = secret.note;
+
+    const scopeEl = document.createElement('span');
+    scopeEl.className = `secret-scope secret-scope-${secret.scope}`;
+    scopeEl.textContent = secret.scope === 'global' ? 'G' : 'P';
+    scopeEl.title = secret.scope === 'global' ? 'Global' : 'Project';
+
+    const valueEl = document.createElement('span');
+    valueEl.className = 'secret-value';
+    valueEl.textContent = '••••••••';
+
+    info.appendChild(nameEl);
+    info.appendChild(scopeEl);
+    info.appendChild(valueEl);
+
+    const actions = document.createElement('div');
+    actions.className = 'secret-actions';
+
+    let revealed = false;
+    const revealBtn = document.createElement('button');
+    revealBtn.className = 'secret-action-btn';
+    revealBtn.textContent = '👁';
+    revealBtn.title = 'Reveal';
+    revealBtn.addEventListener('click', async () => {
+      if (revealed) {
+        valueEl.textContent = '••••••••';
+        revealed = false;
+        return;
+      }
+      const result = await window.electronAPI.secrets.reveal(secret.scope, secret.id);
+      if (result.value != null) {
+        valueEl.textContent = result.value;
+        revealed = true;
+      }
+    });
+
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'secret-action-btn';
+    copyBtn.textContent = '📋';
+    copyBtn.title = 'Copy value';
+    copyBtn.addEventListener('click', async () => {
+      const result = await window.electronAPI.secrets.reveal(secret.scope, secret.id);
+      if (result.value != null) {
+        await navigator.clipboard.writeText(result.value);
+        copyBtn.textContent = '✓';
+        setTimeout(() => { copyBtn.textContent = '📋'; }, 1200);
+      }
+    });
+
+    const editBtn = document.createElement('button');
+    editBtn.className = 'secret-action-btn';
+    editBtn.textContent = '✏️';
+    editBtn.title = 'Edit';
+    editBtn.addEventListener('click', () => {
+      this.secretsEditing = secret.id;
+      this.renderPrompts();
+    });
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'secret-action-btn secret-delete-btn';
+    deleteBtn.textContent = '🗑';
+    deleteBtn.title = 'Delete';
+    deleteBtn.addEventListener('click', async () => {
+      if (!confirm(`Delete secret "${secret.name}"?`)) return;
+      await window.electronAPI.secrets.remove(secret.scope, secret.id);
+      await this.loadSecrets();
+      this.renderPrompts();
+    });
+
+    actions.appendChild(revealBtn);
+    actions.appendChild(copyBtn);
+    actions.appendChild(editBtn);
+    actions.appendChild(deleteBtn);
+
+    row.appendChild(info);
+    row.appendChild(actions);
+    return row;
+  }
+
+  /** Inline add/edit form. Pass null to create, or existing metadata to edit. */
+  createSecretForm(existing) {
+    const form = document.createElement('div');
+    form.className = 'secret-form';
+
+    const nameInput = document.createElement('input');
+    nameInput.className = 'secret-form-input';
+    nameInput.placeholder = 'NAME (e.g. OPENAI_API_KEY)';
+    nameInput.spellcheck = false;
+    if (existing) nameInput.value = existing.name;
+
+    const valueInput = document.createElement('input');
+    valueInput.className = 'secret-form-input';
+    valueInput.type = 'password';
+    valueInput.placeholder = existing ? 'Value (leave blank to keep current)' : 'Value';
+    valueInput.spellcheck = false;
+
+    const noteInput = document.createElement('input');
+    noteInput.className = 'secret-form-input';
+    noteInput.placeholder = 'Note (optional)';
+    if (existing && existing.note) noteInput.value = existing.note;
+
+    const optionsRow = document.createElement('div');
+    optionsRow.className = 'secret-form-options';
+
+    const scopeSelect = document.createElement('select');
+    scopeSelect.className = 'secret-form-select';
+    for (const [val, label] of [['global', 'Global'], ['project', 'Project']]) {
+      const opt = document.createElement('option');
+      opt.value = val;
+      opt.textContent = label;
+      scopeSelect.appendChild(opt);
+    }
+    if (existing) {
+      scopeSelect.value = existing.scope;
+      scopeSelect.disabled = true; // moving scopes = delete + recreate; YAGNI
+    }
+
+    const enabledLabel = document.createElement('label');
+    enabledLabel.className = 'secret-form-enabled';
+    const enabledCheck = document.createElement('input');
+    enabledCheck.type = 'checkbox';
+    enabledCheck.checked = existing ? existing.enabled : true;
+    enabledLabel.appendChild(enabledCheck);
+    enabledLabel.appendChild(document.createTextNode(' Inject into new terminals'));
+
+    optionsRow.appendChild(scopeSelect);
+    optionsRow.appendChild(enabledLabel);
+
+    const errorEl = document.createElement('div');
+    errorEl.className = 'secret-form-error';
+
+    const buttonsRow = document.createElement('div');
+    buttonsRow.className = 'secret-form-buttons';
+
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'secret-form-save';
+    saveBtn.textContent = 'Save';
+    saveBtn.addEventListener('click', async () => {
+      const name = nameInput.value.trim();
+      const value = valueInput.value;
+      let result;
+      if (existing) {
+        const updates = { name, note: noteInput.value, enabled: enabledCheck.checked };
+        if (value) updates.value = value;
+        result = await window.electronAPI.secrets.update(existing.scope, existing.id, updates);
+      } else {
+        result = await window.electronAPI.secrets.create(scopeSelect.value, {
+          name,
+          value,
+          note: noteInput.value,
+          enabled: enabledCheck.checked
+        });
+      }
+      if (result.error) {
+        errorEl.textContent = result.error;
+        return;
+      }
+      this.secretsEditing = null;
+      await this.loadSecrets();
+      this.renderPrompts();
+      this.showSecretsHint();
+    });
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'secret-form-cancel';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', () => {
+      this.secretsEditing = null;
+      this.renderPrompts();
+    });
+
+    buttonsRow.appendChild(saveBtn);
+    buttonsRow.appendChild(cancelBtn);
+
+    form.appendChild(nameInput);
+    form.appendChild(valueInput);
+    form.appendChild(noteInput);
+    form.appendChild(optionsRow);
+    form.appendChild(errorEl);
+    form.appendChild(buttonsRow);
+    return form;
+  }
+
+  /** One-shot hint: env changes only apply to newly spawned terminals. */
+  showSecretsHint() {
+    const existing = document.querySelector('.secrets-hint');
+    if (existing) existing.remove();
+    const hint = document.createElement('div');
+    hint.className = 'secrets-hint';
+    hint.textContent = 'Secrets apply to new terminal sessions.';
+    const section = this.promptsContainer.querySelector('.secrets-section');
+    if (section) section.appendChild(hint);
+    setTimeout(() => hint.remove(), 4000);
   }
 }
 

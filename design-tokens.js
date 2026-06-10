@@ -148,6 +148,7 @@ const tokens = {
   // Typography
   typography: {
     fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+    fontFamilyMono: "ui-monospace, 'SF Mono', Menlo, monospace",
     fontSize: {
       xs: '10px',
       sm: '11px',
@@ -239,6 +240,7 @@ function generateCSSVariables(tokens) {
 
   // Typography
   lines.push(`  --font-family: ${tokens.typography.fontFamily};`);
+  lines.push(`  --font-mono: ${tokens.typography.fontFamilyMono};`);
   for (const [key, value] of Object.entries(tokens.typography.fontSize)) {
     lines.push(`  --font-size-${key}: ${value};`);
   }

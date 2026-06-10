@@ -118,6 +118,33 @@ test('corrupt file is backed up to .corrupt and a fresh store starts', async () 
   assert.strictEqual(fs.existsSync(path.join(mgr.baseDir, 'global.enc.corrupt')), true);
 });
 
+test('getMergedEnv merges scopes with project override and skips disabled', async () => {
+  const mgr = makeManager();
+  await mgr.create('global', null, { name: 'SHARED', value: 'global-val' });
+  await mgr.create('global', null, { name: 'GLOBAL_ONLY', value: 'g' });
+  await mgr.create('global', null, { name: 'DISABLED_ONE', value: 'nope', enabled: false });
+  await mgr.create('project', CWD, { name: 'SHARED', value: 'project-val' });
+  await mgr.create('project', CWD, { name: 'PROJECT_ONLY', value: 'p' });
+
+  const env = mgr.getMergedEnv(CWD);
+  assert.deepStrictEqual(env, {
+    SHARED: 'project-val',
+    GLOBAL_ONLY: 'g',
+    PROJECT_ONLY: 'p'
+  });
+});
+
+test('getMergedEnv without cwd returns global scope only', async () => {
+  const mgr = makeManager();
+  await mgr.create('global', null, { name: 'G', value: '1' });
+  assert.deepStrictEqual(mgr.getMergedEnv(null), { G: '1' });
+});
+
+test('getMergedEnv returns empty object when encryption is unavailable', async () => {
+  const mgr = makeManager(unavailableEncryptor);
+  assert.deepStrictEqual(mgr.getMergedEnv(CWD), {});
+});
+
 (async () => {
   let failed = 0;
   for (const [name, fn] of tests) {

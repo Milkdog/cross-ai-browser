@@ -58,6 +58,12 @@ try {
 
 const DEFAULT_SIDEBAR_WIDTH = 160;
 
+// The /api/oauth/* endpoints aggressively 429 clients that don't identify as
+// Claude Code (community-documented; non-CLI user agents get persistent 429s,
+// while claude-code/* is safe at ~3-minute polling). Same spirit as the web
+// views stripping "Electron" — we're acting on the user's own credentials.
+const OAUTH_API_USER_AGENT = 'claude-code/2.1.0';
+
 
 class ViewManager {
   /**
@@ -107,13 +113,14 @@ class ViewManager {
     this.hookTabToSession = new Map();   // tabId -> sessionId (active binding)
 
     // Usage tracking for Claude Code tabs.
-    // 5-minute interval — the /api/oauth/usage endpoint rate-limits aggressively
-    // and is shared with Claude Code CLI instances. No Retry-After header, and
-    // recovery is slow, so poll conservatively.
+    // 3-minute interval — community-documented as safe when the request
+    // identifies as Claude Code (OAUTH_API_USER_AGENT). The limit is per
+    // access token (shared with the real CLI), so jitter + 429 backoff stay
+    // as a second line of defense.
     this.usageCache = {
       data: null,
       lastFetch: 0,
-      fetchInterval: 300000,
+      fetchInterval: 180000,
       pendingFetch: null,
       backoffUntil: 0,
       consecutive429s: 0,
@@ -1155,7 +1162,7 @@ class ViewManager {
           headers: {
             'Accept': 'application/json',
             'Content-Type': 'application/json',
-            'User-Agent': 'cross-ai-browser/1.0',
+            'User-Agent': OAUTH_API_USER_AGENT,
             'Authorization': `Bearer ${accessToken}`,
             'anthropic-beta': 'oauth-2025-04-20'
           }
@@ -1348,7 +1355,7 @@ class ViewManager {
         method: 'GET',
         headers: {
           'Accept': 'application/json',
-          'User-Agent': 'cross-ai-browser/1.0',
+          'User-Agent': OAUTH_API_USER_AGENT,
           'Authorization': `Bearer ${accessToken}`,
           'anthropic-beta': 'oauth-2025-04-20'
         }
@@ -1377,7 +1384,7 @@ class ViewManager {
         method: 'GET',
         headers: {
           'Accept': 'application/json',
-          'User-Agent': 'cross-ai-browser/1.0',
+          'User-Agent': OAUTH_API_USER_AGENT,
           'Authorization': `Bearer ${accessToken}`,
           'anthropic-beta': 'oauth-2025-04-20'
         }

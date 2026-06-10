@@ -525,7 +525,7 @@ function updateUsageBar(type, data) {
 // Fade the bars from full-strength (just-fetched) to a muted blue as the data
 // ages over the 5-minute fetch interval. Resets to full strength when a new
 // payload arrives. Track stays solid so bar length is still legible.
-const USAGE_FETCH_INTERVAL_MS = 5 * 60 * 1000;
+const USAGE_FETCH_INTERVAL_MS = 3 * 60 * 1000; // matches ViewManager's usage poll interval
 const USAGE_OPACITY_FRESH = 1.0;
 const USAGE_OPACITY_STALE = 0.35;
 

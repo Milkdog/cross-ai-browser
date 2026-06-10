@@ -3129,6 +3129,12 @@ class PromptLibrary {
     if (!this.secretsEditing) return;
     const form = this.promptsContainer && this.promptsContainer.querySelector('.secret-form');
     if (!form) return;
+    const editingKey = this.secretsEditing === 'new' ? 'new' : String(this.secretsEditing);
+    if (form.dataset.secretId !== editingKey) {
+      // Form in the DOM belongs to a different secret — discard, don't capture.
+      this._secretFormDraft = null;
+      return;
+    }
     const nameInput = form.querySelector('.secret-form-name');
     const valueInput = form.querySelector('.secret-form-value');
     const noteInput = form.querySelector('.secret-form-note');
@@ -3348,6 +3354,7 @@ class PromptLibrary {
   createSecretForm(existing) {
     const form = document.createElement('div');
     form.className = 'secret-form';
+    form.dataset.secretId = existing ? existing.id : 'new';
 
     const nameInput = document.createElement('input');
     nameInput.className = 'secret-form-input secret-form-name';

@@ -2071,20 +2071,28 @@ function getTerminalCwd(terminalId) {
 
 ipcMain.handle('secrets-list', (event, { terminalId }) => {
   if (!secretsManager) return { available: false, secrets: [] };
-  const cwd = getTerminalCwd(terminalId);
-  return {
-    available: secretsManager.isEncryptionAvailable(),
-    secrets: [
-      ...secretsManager.list('global'),
-      ...(cwd ? secretsManager.list('project', cwd) : [])
-    ]
-  };
+  try {
+    const cwd = getTerminalCwd(terminalId);
+    return {
+      available: secretsManager.isEncryptionAvailable(),
+      secrets: [
+        ...secretsManager.list('global'),
+        ...(cwd ? secretsManager.list('project', cwd) : [])
+      ]
+    };
+  } catch (err) {
+    return { available: false, secrets: [], error: err.message };
+  }
 });
 
 ipcMain.handle('secrets-create', async (event, { terminalId, scope, secret }) => {
   if (!secretsManager) return { error: 'Secrets store unavailable' };
+  const cwd = getTerminalCwd(terminalId);
+  if (scope === 'project' && !cwd) {
+    return { error: 'No working directory for this terminal' };
+  }
   try {
-    return { secret: await secretsManager.create(scope, getTerminalCwd(terminalId), secret) };
+    return { secret: await secretsManager.create(scope, cwd, secret) };
   } catch (err) {
     return { error: err.message };
   }
@@ -2092,8 +2100,12 @@ ipcMain.handle('secrets-create', async (event, { terminalId, scope, secret }) =>
 
 ipcMain.handle('secrets-update', async (event, { terminalId, scope, id, updates }) => {
   if (!secretsManager) return { error: 'Secrets store unavailable' };
+  const cwd = getTerminalCwd(terminalId);
+  if (scope === 'project' && !cwd) {
+    return { error: 'No working directory for this terminal' };
+  }
   try {
-    return { secret: await secretsManager.update(scope, getTerminalCwd(terminalId), id, updates) };
+    return { secret: await secretsManager.update(scope, cwd, id, updates) };
   } catch (err) {
     return { error: err.message };
   }

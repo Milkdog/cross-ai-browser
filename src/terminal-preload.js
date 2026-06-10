@@ -182,6 +182,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }
   },
 
+  // Secrets Store APIs (values only ever cross via reveal)
+  secrets: {
+    list: () => ipcRenderer.invoke('secrets-list', { terminalId }),
+    create: (scope, secret) => ipcRenderer.invoke('secrets-create', { terminalId, scope, secret }),
+    update: (scope, id, updates) => ipcRenderer.invoke('secrets-update', { terminalId, scope, id, updates }),
+    remove: (scope, id) => ipcRenderer.invoke('secrets-delete', { terminalId, scope, id }),
+    reveal: (scope, id) => ipcRenderer.invoke('secrets-reveal', { terminalId, scope, id })
+  },
+
   // Cleanup listeners when terminal is closed
   cleanup: () => {
     if (dataListener) {

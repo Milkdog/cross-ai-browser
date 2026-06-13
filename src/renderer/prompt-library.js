@@ -230,7 +230,7 @@ class PromptLibrary {
     // Add prompt button
     const addBtn = this.panel.querySelector('.add-btn');
     if (addBtn) {
-      addBtn.addEventListener('click', () => this.showCreateModal());
+      addBtn.addEventListener('click', () => this.handleAddButton());
     }
 
     // Collapse button
@@ -1570,6 +1570,29 @@ class PromptLibrary {
         this.reorderPrompt(this.draggedPromptId, promptId, insertBefore);
       });
     });
+  }
+
+  /**
+   * Context-aware add: creates an item of the active tab's type, defaulting
+   * scope from the current scope filter (Global/Project; else Project).
+   */
+  handleAddButton() {
+    if (this.activeTab === 'secrets') {
+      if (!this.secretsAvailable) return;
+      this.secretsEditing = 'new';
+      this.renderPrompts();
+      return;
+    }
+    const type = this.activeTab === 'notes' ? 'note' : 'prompt';
+    const defaultScope =
+      (this.scopeFilter === 'global' || this.scopeFilter === 'project')
+        ? this.scopeFilter
+        : 'project';
+    this.editingPromptId = null;
+    this.showInlineEditor(
+      type === 'note' ? 'New Note' : 'New Item',
+      '', '', [], [], false, false, defaultScope, type
+    );
   }
 
   /**

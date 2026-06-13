@@ -2107,9 +2107,13 @@ class PromptLibrary {
     const searchContainer = document.getElementById('prompt-search-container');
     const cardsContainer = document.getElementById('prompt-cards-container');
     const panelHeader = document.getElementById('prompt-panel-header');
+    const promptTabs = document.getElementById('prompt-tabs');
+    const scopeFilter = document.getElementById('prompt-scope-filter');
     if (searchContainer) searchContainer.style.display = 'none';
     if (cardsContainer) cardsContainer.style.display = 'none';
     if (panelHeader) panelHeader.style.display = 'none';
+    if (promptTabs) promptTabs.style.display = 'none';
+    if (scopeFilter) scopeFilter.style.display = 'none';
 
     // Create inline editor
     const editor = document.createElement('div');
@@ -2399,9 +2403,13 @@ class PromptLibrary {
     const searchContainer = document.getElementById('prompt-search-container');
     const cardsContainer = document.getElementById('prompt-cards-container');
     const panelHeader = document.getElementById('prompt-panel-header');
+    const promptTabs = document.getElementById('prompt-tabs');
+    const scopeFilter = document.getElementById('prompt-scope-filter');
     if (searchContainer) searchContainer.style.display = '';
     if (cardsContainer) cardsContainer.style.display = '';
     if (panelHeader) panelHeader.style.display = '';
+    if (promptTabs) promptTabs.style.display = '';
+    if (scopeFilter) scopeFilter.style.display = '';
 
     this.isInlineEditing = false;
     this.editingPromptId = null;

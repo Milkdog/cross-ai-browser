@@ -1690,3 +1690,69 @@
   color: var(--color-status-info, #3b82f6);
   padding: 4px 8px;
 }
+
+/* === Tab bar === */
+#prompt-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--color-border-default, #3c3c42);
+  background: var(--color-bg-surface, #1f1f24);
+}
+.prompt-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 8px 6px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.prompt-tab:hover {
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
+}
+.prompt-tab.active {
+  color: var(--color-text-primary, #ffffff);
+  border-bottom-color: var(--color-primary-base, #6366f1);
+}
+.prompt-tab-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--color-primary-base, #6366f1);
+  color: var(--color-text-primary, #ffffff);
+}
+
+/* === Scope segmented filter === */
+#prompt-scope-filter {
+  display: flex;
+  margin: 8px 10px 0;
+  background: var(--color-bg-input, #1a1a1f);
+  border: 1px solid var(--color-border-default, #3c3c42);
+  border-radius: var(--radius-md, 6px);
+  overflow: hidden;
+}
+.prompt-scope-btn {
+  flex: 1;
+  padding: 4px 0;
+  background: none;
+  border: none;
+  color: var(--color-text-muted, rgba(255, 255, 255, 0.5));
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.prompt-scope-btn:hover {
+  color: var(--color-text-secondary, rgba(255, 255, 255, 0.7));
+}
+.prompt-scope-btn.active {
+  background: var(--color-primary-base, #6366f1);
+  color: var(--color-text-primary, #ffffff);
+}

@@ -26,8 +26,18 @@
           <button class="prompt-panel-btn collapse-btn" title="Close panel">×</button>
         </div>
       </div>
+      <div id="prompt-tabs">
+        <button class="prompt-tab active" data-tab="prompts">Prompts<span class="prompt-tab-badge" hidden></span></button>
+        <button class="prompt-tab" data-tab="notes">Notes<span class="prompt-tab-badge" hidden></span></button>
+        <button class="prompt-tab" data-tab="secrets">Secrets<span class="prompt-tab-badge" hidden></span></button>
+      </div>
+      <div id="prompt-scope-filter">
+        <button class="prompt-scope-btn active" data-scope="all">All</button>
+        <button class="prompt-scope-btn" data-scope="global">Global</button>
+        <button class="prompt-scope-btn" data-scope="project">Project</button>
+      </div>
       <div id="prompt-search-container">
-        <input type="text" id="prompt-search-input" placeholder="Search prompts...">
+        <input type="text" id="prompt-search-input" placeholder="Search...">
       </div>
       <div id="prompt-cards-container"></div>
     </div>

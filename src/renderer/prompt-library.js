@@ -3231,11 +3231,6 @@ class PromptLibrary {
   }
 
   /**
-   * Build the SECRETS section: header with add button, masked rows, inline
-   * add/edit form. Secrets are not draggable and never join prompt search
-   * by value — only name matching below.
-   */
-  /**
    * Secrets tab: masked rows + inline add/edit form. Secrets are not draggable
    * and never join search by value — only by name (filterItems nameOnly=true).
    */
@@ -3368,7 +3363,6 @@ class PromptLibrary {
         return;
       }
       await this.loadSecrets();
-      this.renderPrompts();
     });
 
     actions.appendChild(revealBtn);
@@ -3471,7 +3465,6 @@ class PromptLibrary {
       this.secretsEditing = null;
       this._secretFormDraft = null;
       await this.loadSecrets();
-      this.renderPrompts();
       this.showSecretsHint();
     });
 
@@ -3503,8 +3496,7 @@ class PromptLibrary {
     const hint = document.createElement('div');
     hint.className = 'secrets-hint';
     hint.textContent = 'Secrets apply to new terminal sessions.';
-    const section = this.promptsContainer.querySelector('.secrets-section');
-    if (section) section.appendChild(hint);
+    this.promptsContainer.appendChild(hint);
     setTimeout(() => hint.remove(), 4000);
   }
 }

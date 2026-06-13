@@ -29,7 +29,6 @@ class PromptLibrary {
     this.reusableCollapsed = false;
     this.regularCollapsed = false;
     this.notesCollapsed = false;
-    this.secretsCollapsed = true;
     this.secrets = [];           // metadata only — never values
     this.secretsAvailable = true;
     this.secretsEditing = null;  // null | 'new' | secret id
@@ -247,6 +246,28 @@ class PromptLibrary {
         this.renderPrompts();
       });
     }
+
+    // Tab bar
+    document.querySelectorAll('#prompt-tabs .prompt-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tab = btn.dataset.tab;
+        if (!tab || tab === this.activeTab) return;
+        this.activeTab = tab;
+        this.savePanelState();
+        this.renderPrompts();
+      });
+    });
+
+    // Scope segmented filter
+    document.querySelectorAll('#prompt-scope-filter .prompt-scope-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const scope = btn.dataset.scope;
+        if (!scope || scope === this.scopeFilter) return;
+        this.scopeFilter = scope;
+        this.savePanelState();
+        this.renderPrompts();
+      });
+    });
 
     // Resize divider
     if (this.resizeDivider) {
@@ -685,17 +706,47 @@ class PromptLibrary {
   /**
    * Filter prompts based on search query
    */
-  filterPrompts(prompts) {
-    if (!this.searchQuery) return prompts;
+  /** True if the item passes the active Global/Project scope filter. */
+  matchesScope(item) {
+    if (this.scopeFilter === 'all') return true;
+    return (item.scope || 'project') === this.scopeFilter;
+  }
 
-    return prompts.filter(p => {
-      const title = (p.title || '').toLowerCase();
-      const content = (p.prompt || p.description || '').toLowerCase();
-      const labels = (p.labels || []).map(l => l.toLowerCase());
-      return title.includes(this.searchQuery) ||
-             content.includes(this.searchQuery) ||
-             labels.some(l => l.includes(this.searchQuery));
-    });
+  /**
+   * True if the item passes the active search query. Secrets pass nameOnly=true
+   * so their values never participate in search (security rule).
+   */
+  matchesSearch(item, nameOnly = false) {
+    if (!this.searchQuery) return true;
+    if (nameOnly) {
+      return (item.name || '').toLowerCase().includes(this.searchQuery);
+    }
+    const title = (item.title || '').toLowerCase();
+    const content = (item.prompt || item.description || '').toLowerCase();
+    const labels = (item.labels || []).map(l => l.toLowerCase());
+    return title.includes(this.searchQuery) ||
+           content.includes(this.searchQuery) ||
+           labels.some(l => l.includes(this.searchQuery));
+  }
+
+  /** Apply both scope and search filters to a list of items. */
+  filterItems(items, nameOnly = false) {
+    return items.filter(i => this.matchesScope(i) && this.matchesSearch(i, nameOnly));
+  }
+
+  /** Build a standard empty/no-match placeholder for any tab. */
+  buildEmptyState(message) {
+    const emptyState = document.createElement('div');
+    emptyState.className = 'prompt-empty-state';
+    const icon = document.createElement('div');
+    icon.className = 'prompt-empty-icon';
+    icon.textContent = '📋';
+    const text = document.createElement('div');
+    text.className = 'prompt-empty-text';
+    text.textContent = message;
+    emptyState.appendChild(icon);
+    emptyState.appendChild(text);
+    return emptyState;
   }
 
   /**
@@ -725,58 +776,138 @@ class PromptLibrary {
    * Section order: Reusable (Global, Project) -> Regular -> Testing -> Done
    * Favorites sort to top within each section
    */
+  /**
+   * Router: paint tab/scope chrome, then render the active tab's body.
+   */
   renderPrompts() {
     if (!this.promptsContainer) return;
 
     // Capture any in-progress secret form draft before clearing the container
     this.captureSecretFormDraft();
 
-    // Clear any existing timer
+    // Clear any existing testing timer (the Prompts tab re-creates it if needed)
     if (this.testingTimerInterval) {
       clearInterval(this.testingTimerInterval);
       this.testingTimerInterval = null;
     }
 
-    // Clear container
+    this.updateTabChrome();
+
     this.promptsContainer.textContent = '';
+    switch (this.activeTab) {
+      case 'notes':
+        this.renderNotesTab();
+        break;
+      case 'secrets':
+        this.renderSecretsTab();
+        break;
+      case 'prompts':
+      default:
+        this.renderPromptsTab();
+        break;
+    }
+  }
 
-    // Apply search filter
-    const filteredPrompts = this.filterPrompts(this.prompts);
+  /** Reflect activeTab + scopeFilter in the tab bar and scope segmented control,
+   *  and show per-tab search match-count badges while a query is active. */
+  updateTabChrome() {
+    const tabs = document.querySelectorAll('#prompt-tabs .prompt-tab');
+    tabs.forEach(btn => {
+      const tab = btn.dataset.tab;
+      btn.classList.toggle('active', tab === this.activeTab);
+      const badge = btn.querySelector('.prompt-tab-badge');
+      if (!badge) return;
+      const count = (this.searchQuery && tab !== this.activeTab) ? this.tabMatchCount(tab) : 0;
+      if (count > 0) {
+        badge.textContent = String(count);
+        badge.hidden = false;
+      } else {
+        badge.textContent = '';
+        badge.hidden = true;
+      }
+    });
 
-    // Notes are a distinct item type and get their own section — no lifecycle states.
-    const isNote = (p) => p.type === 'note';
-    const notes = filteredPrompts.filter(isNote);
+    const scopeBtns = document.querySelectorAll('#prompt-scope-filter .prompt-scope-btn');
+    scopeBtns.forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.scope === this.scopeFilter);
+    });
+  }
 
-    // Prompt-type items split by lifecycle.
-    const promptItems = filteredPrompts.filter(p => !isNote(p));
-    // Reusable prompts never go to testing/done - combine global and project, global first
-    const reusablePrompts = promptItems.filter(p => p.reusable);
-    // Non-reusable prompts can be in regular, testing, or done
-    const regularPrompts = promptItems.filter(p => !p.reusable && !p.done && !p.testing);
-    const testingPrompts = promptItems.filter(p => !p.reusable && p.testing && !p.done);
-    const donePrompts = promptItems.filter(p => !p.reusable && p.done);
+  /** Count items in a tab that match the current search + scope filters. */
+  tabMatchCount(tab) {
+    if (tab === 'secrets') {
+      return this.filterItems(this.secrets, true).length;
+    }
+    const items = this.prompts.filter(p =>
+      tab === 'notes' ? p.type === 'note' : p.type !== 'note');
+    return this.filterItems(items).length;
+  }
 
-    // Sort reusable: global first, then favorites, then by order
+  /** Prompts tab: Reusable + Active sections, with Testing/Done collapsible. */
+  renderPromptsTab() {
+    const items = this.filterItems(this.prompts.filter(p => p.type !== 'note'));
+    const reusablePrompts = items.filter(p => p.reusable);
+    const regularPrompts = items.filter(p => !p.reusable && !p.done && !p.testing);
+    const testingPrompts = items.filter(p => !p.reusable && p.testing && !p.done);
+    const donePrompts = items.filter(p => !p.reusable && p.done);
+
     reusablePrompts.sort((a, b) => {
-      // Global prompts first
       if (a.scope === 'global' && b.scope !== 'global') return -1;
       if (a.scope !== 'global' && b.scope === 'global') return 1;
-      // Then favorites
       if (a.isFavorite && !b.isFavorite) return -1;
       if (!a.isFavorite && b.isFavorite) return 1;
       return (a.order || 0) - (b.order || 0);
     });
-
-    // Sort other groups: favorites first, then by order
     const sortWithFavoritesFirst = (a, b) => {
       if (a.isFavorite && !b.isFavorite) return -1;
       if (!a.isFavorite && b.isFavorite) return 1;
       return (a.order || 0) - (b.order || 0);
     };
-
     regularPrompts.sort(sortWithFavoritesFirst);
+    testingPrompts.sort((a, b) => {
+      if (a.isFavorite && !b.isFavorite) return -1;
+      if (!a.isFavorite && b.isFavorite) return 1;
+      return (b.testingStartedAt || 0) - (a.testingStartedAt || 0);
+    });
+    donePrompts.sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
 
-    // Sort notes: global first, then favorites, then by order (mirrors reusable order)
+    if (items.length === 0) {
+      const msg = (this.searchQuery || this.scopeFilter !== 'all')
+        ? 'No prompts match.'
+        : 'No prompts yet. Click + to add a prompt.';
+      this.promptsContainer.appendChild(this.buildEmptyState(msg));
+      return;
+    }
+
+    if (reusablePrompts.length > 0) {
+      this.promptsContainer.appendChild(
+        this.createSection('REUSABLE', reusablePrompts, this.reusableCollapsed,
+          (collapsed) => { this.reusableCollapsed = collapsed; }, 'reusable'));
+    }
+    if (regularPrompts.length > 0) {
+      this.promptsContainer.appendChild(
+        this.createSection('ACTIVE', regularPrompts, this.regularCollapsed,
+          (collapsed) => { this.regularCollapsed = collapsed; }, 'regular'));
+    }
+    if (testingPrompts.length > 0) {
+      this.promptsContainer.appendChild(this.createTestingSection(testingPrompts));
+    }
+    if (donePrompts.length > 0) {
+      this.promptsContainer.appendChild(this.createDoneSection(donePrompts));
+    }
+
+    this.setupPromptEventListeners();
+
+    if (testingPrompts.length > 0) {
+      this.testingTimerInterval = setInterval(() => {
+        this.updateTestingTimers();
+      }, 60000);
+    }
+  }
+
+  /** Notes tab: a single NOTES section. */
+  renderNotesTab() {
+    const notes = this.filterItems(this.prompts.filter(p => p.type === 'note'));
     notes.sort((a, b) => {
       if (a.scope === 'global' && b.scope !== 'global') return -1;
       if (a.scope !== 'global' && b.scope === 'global') return 1;
@@ -785,86 +916,19 @@ class PromptLibrary {
       return (a.order || 0) - (b.order || 0);
     });
 
-    // Sort testing prompts by testingStartedAt descending (newest first), favorites first
-    testingPrompts.sort((a, b) => {
-      if (a.isFavorite && !b.isFavorite) return -1;
-      if (!a.isFavorite && b.isFavorite) return 1;
-      return (b.testingStartedAt || 0) - (a.testingStartedAt || 0);
-    });
-
-    // Sort done prompts by doneAt descending (newest first)
-    donePrompts.sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
-
-    // Empty state
-    if (filteredPrompts.length === 0) {
-      const emptyState = document.createElement('div');
-      emptyState.className = 'prompt-empty-state';
-
-      const icon = document.createElement('div');
-      icon.className = 'prompt-empty-icon';
-      icon.textContent = '📋';
-
-      const text = document.createElement('div');
-      text.className = 'prompt-empty-text';
-      text.textContent = this.searchQuery
-        ? 'No prompts match your search.'
-        : 'No prompts yet. Click + to add a prompt.';
-
-      emptyState.appendChild(icon);
-      emptyState.appendChild(text);
-      this.promptsContainer.appendChild(emptyState);
-      this.promptsContainer.appendChild(this.renderSecretsSection());
+    if (notes.length === 0) {
+      const msg = (this.searchQuery || this.scopeFilter !== 'all')
+        ? 'No notes match.'
+        : 'No notes yet. Click + to add a note.';
+      this.promptsContainer.appendChild(this.buildEmptyState(msg));
       return;
     }
 
-    // 0. Render Notes section first
-    if (notes.length > 0) {
-      const section = this.createSection('NOTES', notes, this.notesCollapsed, (collapsed) => {
-        this.notesCollapsed = collapsed;
-      }, 'notes');
-      this.promptsContainer.appendChild(section);
-    }
+    this.promptsContainer.appendChild(
+      this.createSection('NOTES', notes, this.notesCollapsed,
+        (collapsed) => { this.notesCollapsed = collapsed; }, 'notes'));
 
-    // 1. Render Reusable section (global prompts first, then project)
-    if (reusablePrompts.length > 0) {
-      const section = this.createSection('REUSABLE', reusablePrompts, this.reusableCollapsed, (collapsed) => {
-        this.reusableCollapsed = collapsed;
-      }, 'reusable');
-      this.promptsContainer.appendChild(section);
-    }
-
-    // 2. Render Regular section (non-reusable, active prompts)
-    if (regularPrompts.length > 0) {
-      const section = this.createSection('PROMPTS', regularPrompts, this.regularCollapsed, (collapsed) => {
-        this.regularCollapsed = collapsed;
-      }, 'regular');
-      this.promptsContainer.appendChild(section);
-    }
-
-    // 4. Render Testing section
-    if (testingPrompts.length > 0) {
-      const testingSection = this.createTestingSection(testingPrompts);
-      this.promptsContainer.appendChild(testingSection);
-    }
-
-    // 5. Render Done section
-    if (donePrompts.length > 0) {
-      const doneSection = this.createDoneSection(donePrompts);
-      this.promptsContainer.appendChild(doneSection);
-    }
-
-    // 6. Secrets section (always rendered — it is the only entry point for adding secrets)
-    this.promptsContainer.appendChild(this.renderSecretsSection());
-
-    // Set up prompt event listeners
     this.setupPromptEventListeners();
-
-    // Set up timer to update testing elapsed times
-    if (testingPrompts.length > 0) {
-      this.testingTimerInterval = setInterval(() => {
-        this.updateTestingTimers();
-      }, 60000); // Update every minute
-    }
   }
 
   /**
@@ -1148,7 +1212,7 @@ class PromptLibrary {
       scopeIcon.className = 'prompt-scope-icon ' + (prompt.scope === 'global' ? 'global' : 'project');
       scopeIcon.title = prompt.scope === 'global' ? 'Global' : 'Project';
       scopeIcon.appendChild(this.createIcon(prompt.scope === 'global' ? 'globe' : 'folder', 14));
-      headerRow.appendChild(scopeIcon);
+      if (this.scopeFilter === 'all') headerRow.appendChild(scopeIcon);
 
       // Title or content preview inline
       const textContent = document.createElement('div');
@@ -3163,6 +3227,7 @@ class PromptLibrary {
       console.error('Failed to load secrets:', err);
       this.secrets = [];
     }
+    this.renderPrompts();
   }
 
   /**
@@ -3170,80 +3235,40 @@ class PromptLibrary {
    * add/edit form. Secrets are not draggable and never join prompt search
    * by value — only name matching below.
    */
-  renderSecretsSection() {
-    const section = document.createElement('div');
-    section.className = 'prompt-section secrets-section';
-
-    const header = document.createElement('div');
-    header.className = 'prompt-section-header';
-
-    const toggle = document.createElement('button');
-    toggle.className = 'prompt-section-toggle';
-    toggle.textContent = this.secretsCollapsed ? '▶' : '▼';
-
-    const titleEl = document.createElement('span');
-    titleEl.className = 'prompt-section-title';
-    titleEl.textContent = `SECRETS (${this.secrets.length})`;
-
-    const addBtn = document.createElement('button');
-    addBtn.className = 'secrets-add-btn';
-    addBtn.textContent = '+';
-    addBtn.title = 'Add secret';
-    if (!this.secretsAvailable) {
-      addBtn.disabled = true;
-      addBtn.title = 'Secure storage unavailable';
-    }
-    addBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      this.secretsCollapsed = false;
-      this.secretsEditing = 'new';
-      this.renderPrompts();
-    });
-
-    header.appendChild(toggle);
-    header.appendChild(titleEl);
-    header.appendChild(addBtn);
-
-    const body = document.createElement('div');
-    body.className = 'prompt-section-cards';
-    if (this.secretsCollapsed) body.style.display = 'none';
-
+  /**
+   * Secrets tab: masked rows + inline add/edit form. Secrets are not draggable
+   * and never join search by value — only by name (filterItems nameOnly=true).
+   */
+  renderSecretsTab() {
     if (!this.secretsAvailable) {
       const warn = document.createElement('div');
       warn.className = 'secrets-unavailable';
       warn.textContent = 'Secure storage is unavailable on this system — secrets are disabled.';
-      body.appendChild(warn);
-    } else {
-      if (this.secretsEditing === 'new') {
-        body.appendChild(this.createSecretForm(null));
-      }
-      const query = (this.searchQuery || '').toLowerCase();
-      const visible = query
-        ? this.secrets.filter(s => s.name.toLowerCase().includes(query))
-        : this.secrets;
-      visible.forEach(secret => {
-        if (this.secretsEditing === secret.id) {
-          body.appendChild(this.createSecretForm(secret));
-        } else {
-          body.appendChild(this.createSecretRow(secret));
-        }
-      });
-      if (visible.length === 0 && this.secretsEditing !== 'new') {
-        const empty = document.createElement('div');
-        empty.className = 'secrets-empty';
-        empty.textContent = query ? 'No secrets match.' : 'No secrets yet. Click + to add one.';
-        body.appendChild(empty);
-      }
+      this.promptsContainer.appendChild(warn);
+      return;
     }
 
-    header.addEventListener('click', () => {
-      this.secretsCollapsed = !this.secretsCollapsed;
-      this.renderPrompts();
+    if (this.secretsEditing === 'new') {
+      this.promptsContainer.appendChild(this.createSecretForm(null));
+    }
+
+    const visible = this.filterItems(this.secrets, true);
+    visible.forEach(secret => {
+      if (this.secretsEditing === secret.id) {
+        this.promptsContainer.appendChild(this.createSecretForm(secret));
+      } else {
+        this.promptsContainer.appendChild(this.createSecretRow(secret));
+      }
     });
 
-    section.appendChild(header);
-    section.appendChild(body);
-    return section;
+    if (visible.length === 0 && this.secretsEditing !== 'new') {
+      const empty = document.createElement('div');
+      empty.className = 'secrets-empty';
+      empty.textContent = (this.searchQuery || this.scopeFilter !== 'all')
+        ? 'No secrets match.'
+        : 'No secrets yet. Click + to add one.';
+      this.promptsContainer.appendChild(empty);
+    }
   }
 
   /** One masked secret row: name, scope chip, dots, reveal/copy/edit/delete. */
@@ -3269,7 +3294,7 @@ class PromptLibrary {
     valueEl.textContent = '••••••••';
 
     info.appendChild(nameEl);
-    info.appendChild(scopeEl);
+    if (this.scopeFilter === 'all') info.appendChild(scopeEl);
     info.appendChild(valueEl);
 
     const actions = document.createElement('div');

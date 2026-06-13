@@ -201,6 +201,7 @@ Users can convert between types at any time; converting to a note strips incompa
 - Images: `prompt-images/<image-id>.png` with `<image-id>_thumb.png` thumbnails
 
 ### UI
+- **Tabbed layout** - Three tabs (Prompts / Notes / Secrets) with a Global/Project/All scope filter. Prompts tab holds Reusable + Active sections plus collapsible Testing/Done. `activeTab` and `scopeFilter` persist per terminal in panel state. `renderPrompts()` is a router delegating to `renderPromptsTab`/`renderNotesTab`/`renderSecretsTab`.
 - Toggle button in terminal view ("Prompts")
 - Resizable panel (200-500px width)
 - Keyboard shortcut: Cmd+Shift+P to toggle

@@ -1024,23 +1024,32 @@ class PromptLibraryManager extends EventEmitter {
   /**
    * Get panel state for a terminal tab
    * @param {string} tabId - Terminal tab ID
-   * @returns {Object} Panel state { visible, width }
+   * @returns {Object} Panel state { visible, width, activeTab, scopeFilter }
    */
   getPanelState(tabId) {
     const panels = this.store.get('promptPanels', {});
-    return panels[tabId] || { visible: false, width: 300 };
+    const saved = panels[tabId] || {};
+    return {
+      visible: saved.visible || false,
+      width: saved.width || 300,
+      activeTab: saved.activeTab || 'prompts',
+      scopeFilter: saved.scopeFilter || 'all'
+    };
   }
 
   /**
    * Set panel state for a terminal tab
    * @param {string} tabId - Terminal tab ID
-   * @param {Object} state - Panel state { visible, width }
+   * @param {Object} state - Panel state { visible, width, activeTab, scopeFilter }
    */
   setPanelState(tabId, state) {
     const panels = this.store.get('promptPanels', {});
+    const prev = panels[tabId] || {};
     panels[tabId] = {
-      visible: state.visible !== undefined ? state.visible : (panels[tabId]?.visible || false),
-      width: state.width !== undefined ? state.width : (panels[tabId]?.width || 300)
+      visible: state.visible !== undefined ? state.visible : (prev.visible || false),
+      width: state.width !== undefined ? state.width : (prev.width || 300),
+      activeTab: state.activeTab !== undefined ? state.activeTab : (prev.activeTab || 'prompts'),
+      scopeFilter: state.scopeFilter !== undefined ? state.scopeFilter : (prev.scopeFilter || 'all')
     };
     this.store.set('promptPanels', panels);
 

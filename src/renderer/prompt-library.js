@@ -35,6 +35,8 @@ class PromptLibrary {
     this.secretsEditing = null;  // null | 'new' | secret id
     this._secretFormDraft = null; // captured draft while re-rendering
     this.searchQuery = '';
+    this.activeTab = 'prompts';   // 'prompts' | 'notes' | 'secrets'
+    this.scopeFilter = 'all';     // 'all' | 'global' | 'project'
     this.testingTimerInterval = null;
     this.isInlineEditing = false;
     this.preEditPanelWidth = null;
@@ -513,6 +515,8 @@ class PromptLibrary {
         const state = await window.electronAPI.promptLibrary.getPanelState();
         this.panelVisible = state?.visible || false;
         this.panelWidth = state?.width || 300;
+        this.activeTab = state?.activeTab || 'prompts';
+        this.scopeFilter = state?.scopeFilter || 'all';
 
         this.updatePanelVisibility();
       }
@@ -529,7 +533,9 @@ class PromptLibrary {
       if (window.electronAPI?.promptLibrary?.setPanelState) {
         window.electronAPI.promptLibrary.setPanelState({
           visible: this.panelVisible,
-          width: this.panelWidth
+          width: this.panelWidth,
+          activeTab: this.activeTab,
+          scopeFilter: this.scopeFilter
         });
       }
     } catch (err) {

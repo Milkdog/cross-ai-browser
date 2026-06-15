@@ -24,3 +24,6 @@ npm-debug.log*
 # Claude Code
 .claude/
 .firebase
+
+# Brainstorming visual companion
+.superpowers/

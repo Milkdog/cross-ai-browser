@@ -245,6 +245,14 @@ variables into Claude Code terminal PTYs at spawn (project overrides global).
 - No plaintext fallback: writes refused if `safeStorage` is unavailable
 - Tests: `test/secrets-manager.test.js` (plain Node, injected fake encryptor)
 
+## Testing
+No test framework — tests are plain Node scripts in `test/`, run directly (e.g.
+`node test/secrets-manager.test.js`), each exiting non-zero on failure.
+- `test/secrets-manager.test.js`, `test/tab-attribution.test.js`, `test/prompt-panel-state.test.js`
+- **Convention:** core modules take an injectable dependency so they're testable under plain Node without Electron — e.g. SecretsManager takes a fake `encryptor`, PromptLibraryManager a fake `store`. `require('electron')` under plain Node returns a path string, so modules whose constructors touch no Electron APIs (ViewManager) can still be instantiated in tests.
+- Renderer code (`prompt-library.js`, etc.) has no automated tests — verify with `node --check` for syntax plus a manual in-app checklist.
+- Node isn't on PATH by default; prefix with `export PATH="$(echo $HOME/.nvm/versions/node/*/bin):$PATH"`.
+
 ## Commands
 - `npm start` - Run in development
 - `npm run build` - Build distributable .app/.dmg

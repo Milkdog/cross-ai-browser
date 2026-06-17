@@ -3713,15 +3713,26 @@ class PromptLibrary {
   async handleMarkdownFilesChanged() {
     await this.loadMarkdownFiles();
     if (!this.mdOpenFile) return;
+    const onMarkdownTab = this.activeTab === 'markdown';
     const exists = this.mdFiles.some(f => f.relPath === this.mdOpenFile);
     if (!exists) {
-      if (this.mdDirty) { this.mdStaleNotice = true; this.renderMarkdownDetail(); }
-      else { this.closeMarkdownFileImmediate(); }
+      // Open file was removed/renamed on disk.
+      if (this.mdDirty) {
+        this.mdStaleNotice = true;
+        if (onMarkdownTab) this.renderMarkdownDetail();
+      } else if (onMarkdownTab) {
+        this.closeMarkdownFileImmediate();
+      } else {
+        // Off-tab: drop the open file without touching chrome; the list shows on return.
+        this.mdOpenFile = null;
+        this._mdContentPath = null;
+        this.savePanelState();
+      }
       return;
     }
     if (this.mdDirty) {
       this.mdStaleNotice = true;
-      this.renderMarkdownDetail();
+      if (onMarkdownTab) this.renderMarkdownDetail();
       return;
     }
     try {
@@ -3730,7 +3741,7 @@ class PromptLibrary {
         this.mdContent = res.content;
         this.mdDraft = res.content;
         this.mdLoadedMtimeMs = res.mtimeMs;
-        this.renderMarkdownDetail();
+        if (onMarkdownTab) this.renderMarkdownDetail();
       }
     } catch (err) {
       console.error('Failed to reload markdown file:', err);
@@ -3817,7 +3828,8 @@ class PromptLibrary {
 
       const actions = document.createElement('div');
       actions.className = 'md-dialog-actions';
-      const close = (value) => { overlay.remove(); resolve(value); };
+      const onKey = (e) => { if (e.key === 'Escape') close(null); };
+      const close = (value) => { document.removeEventListener('keydown', onKey); overlay.remove(); resolve(value); };
       for (const b of buttons) {
         const btn = document.createElement('button');
         btn.className = 'md-dialog-btn'
@@ -3830,16 +3842,14 @@ class PromptLibrary {
       box.appendChild(actions);
 
       overlay.addEventListener('click', (e) => { if (e.target === overlay) close(null); });
-      document.addEventListener('keydown', function onKey(e) {
-        if (e.key === 'Escape') { document.removeEventListener('keydown', onKey); close(null); }
-      });
+      document.addEventListener('keydown', onKey);
 
       overlay.appendChild(box);
       document.body.appendChild(overlay);
     });
   }
 
-  /** Modal with a single text input; resolves to the trimmed value, or null if cancelled. */
+  /** Modal with a single text input; resolves with the input value (untrimmed), or null if cancelled. */
   showInputDialog({ title, message, value = '', placeholder = '', confirmLabel = 'OK' }) {
     return new Promise((resolve) => {
       const overlay = document.createElement('div');

@@ -1819,9 +1819,9 @@
   background: transparent; border: none; cursor: pointer;
   color: var(--color-text-secondary, #9aa); font-size: 12px; padding: 2px 8px;
 }
-.md-toggle button.active { background: var(--color-primary-base, #4f46e5); color: #fff; }
+.md-toggle button.active { background: var(--color-primary-base, #4f46e5); color: white; }
 .md-save {
-  background: var(--color-status-success, #16794a); color: #fff;
+  background: var(--color-status-success, #16794a); color: white;
   border: none; border-radius: var(--radius-sm, 4px); cursor: pointer;
   font-size: 12px; padding: 3px 10px;
 }

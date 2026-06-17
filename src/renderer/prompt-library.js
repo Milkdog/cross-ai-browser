@@ -36,6 +36,20 @@ class PromptLibrary {
     this.searchQuery = '';
     this.activeTab = 'prompts';   // 'prompts' | 'notes' | 'secrets'
     this.scopeFilter = 'all';     // 'all' | 'global' | 'project'
+
+    // Markdown tab state
+    this.mdFiles = [];
+    this.mdOpenFile = null;       // relPath of the open file, or null (list view)
+    this.mdMode = 'view';         // 'view' | 'edit'
+    this.mdContent = '';          // last content loaded from / saved to disk
+    this.mdDraft = '';            // current editor text
+    this.mdDirty = false;
+    this.mdLoadedMtimeMs = 0;
+    this.mdStaleNotice = false;   // disk changed under unsaved edits
+    this._mdContentPath = null;   // relPath whose content is in mdContent/mdDraft
+    this._mdLoaded = false;       // file list fetched at least once
+    this._mdChangeSubscribed = false;
+
     this.testingTimerInterval = null;
     this.isInlineEditing = false;
     this.preEditPanelWidth = null;
@@ -793,6 +807,12 @@ class PromptLibrary {
 
     this.updateTabChrome();
 
+    // The Markdown tab is filesystem-based, not scope-based — hide the scope filter.
+    const scopeFilterEl = document.getElementById('prompt-scope-filter');
+    if (scopeFilterEl && !this.isInlineEditing) {
+      scopeFilterEl.style.display = (this.activeTab === 'markdown') ? 'none' : '';
+    }
+
     this.promptsContainer.textContent = '';
     switch (this.activeTab) {
       case 'notes':
@@ -800,6 +820,9 @@ class PromptLibrary {
         break;
       case 'secrets':
         this.renderSecretsTab();
+        break;
+      case 'markdown':
+        this.renderMarkdownTab();
         break;
       case 'prompts':
       default:
@@ -835,6 +858,12 @@ class PromptLibrary {
 
   /** Count items in a tab that match the current search + scope filters. */
   tabMatchCount(tab) {
+    if (tab === 'markdown') {
+      const q = this.searchQuery;
+      if (!q) return 0;
+      return this.mdFiles.filter(f =>
+        f.relPath.toLowerCase().includes(q) || f.name.toLowerCase().includes(q)).length;
+    }
     if (tab === 'secrets') {
       return this.filterItems(this.secrets, true).length;
     }
@@ -1577,6 +1606,10 @@ class PromptLibrary {
    * scope from the current scope filter (Global/Project; else Project).
    */
   handleAddButton() {
+    if (this.activeTab === 'markdown') {
+      this.createNewMarkdownFile();
+      return;
+    }
     if (this.activeTab === 'secrets') {
       if (!this.secretsAvailable) return;
       this.secretsEditing = 'new';
@@ -3530,6 +3563,323 @@ class PromptLibrary {
     this.promptsContainer.appendChild(hint);
     setTimeout(() => hint.remove(), 4000);
   }
+
+  // ---------- Markdown tab ----------
+
+  renderMarkdownTab() {
+    this.ensureMarkdownSubscription();
+    if (this.mdOpenFile) {
+      // Detail view lives in Task 5; until then, fall through to a reload.
+      if (this._mdContentPath !== this.mdOpenFile) {
+        this.setMarkdownChromeHidden(true);
+        this.promptsContainer.textContent = '';
+        this.promptsContainer.appendChild(this.buildEmptyState('Loading…'));
+        this.restoreOpenMarkdownFile();
+        return;
+      }
+      this.renderMarkdownDetail();
+      return;
+    }
+    if (!this._mdLoaded) {
+      this.promptsContainer.textContent = '';
+      this.promptsContainer.appendChild(this.buildEmptyState('Loading…'));
+      this.loadMarkdownFiles();
+      return;
+    }
+    this.renderMarkdownList();
+  }
+
+  ensureMarkdownSubscription() {
+    if (this._mdChangeSubscribed) return;
+    if (window.electronAPI?.markdownFiles?.onFilesChanged) {
+      window.electronAPI.markdownFiles.onFilesChanged(() => this.handleMarkdownFilesChanged());
+      this._mdChangeSubscribed = true;
+    }
+  }
+
+  async loadMarkdownFiles() {
+    try {
+      this.mdFiles = (await window.electronAPI.markdownFiles.list()) || [];
+    } catch (err) {
+      console.error('Failed to list markdown files:', err);
+      this.mdFiles = [];
+    }
+    this._mdLoaded = true;
+    if (this.activeTab === 'markdown' && !this.mdOpenFile) {
+      this.renderMarkdownList();
+    }
+    this.updateTabChrome();
+  }
+
+  renderMarkdownList() {
+    this.setMarkdownChromeHidden(false);
+    const container = this.promptsContainer;
+    container.textContent = '';
+
+    if (this.mdFiles.length === 0) {
+      container.appendChild(this.buildEmptyState('No markdown files found. Click + to create one.'));
+      return;
+    }
+
+    const q = this.searchQuery;
+    const files = q
+      ? this.mdFiles.filter(f =>
+          f.relPath.toLowerCase().includes(q) || f.name.toLowerCase().includes(q))
+      : this.mdFiles;
+
+    if (files.length === 0) {
+      container.appendChild(this.buildEmptyState('No files match.'));
+      return;
+    }
+
+    const listEl = document.createElement('div');
+    listEl.className = 'md-list';
+    for (const file of files) listEl.appendChild(this.buildMarkdownRow(file));
+    container.appendChild(listEl);
+  }
+
+  buildMarkdownRow(file) {
+    const row = document.createElement('div');
+    row.className = 'md-row';
+
+    const main = document.createElement('div');
+    main.className = 'md-row-main';
+    const nm = document.createElement('div');
+    nm.className = 'md-row-name';
+    nm.textContent = file.name;
+    const dir = document.createElement('div');
+    dir.className = 'md-row-dir';
+    dir.textContent = file.dir;
+    main.appendChild(nm);
+    main.appendChild(dir);
+    // Open handler is added in Task 5.
+    row.appendChild(main);
+
+    const actions = document.createElement('div');
+    actions.className = 'md-row-actions';
+
+    const renameBtn = document.createElement('button');
+    renameBtn.className = 'md-row-btn';
+    renameBtn.title = 'Rename';
+    renameBtn.appendChild(this.createIcon('edit', 14));
+    renameBtn.addEventListener('click', (e) => { e.stopPropagation(); this.promptRenameMarkdown(file); });
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'md-row-btn';
+    delBtn.title = 'Delete';
+    delBtn.appendChild(this.createIcon('trash', 14));
+    delBtn.addEventListener('click', (e) => { e.stopPropagation(); this.deleteMarkdownFile(file); });
+
+    actions.appendChild(renameBtn);
+    actions.appendChild(delBtn);
+    row.appendChild(actions);
+    return row;
+  }
+
+  setMarkdownChromeHidden(hidden) {
+    const searchContainer = document.getElementById('prompt-search-container');
+    const panelHeader = document.getElementById('prompt-panel-header');
+    const promptTabs = document.getElementById('prompt-tabs');
+    const scopeFilter = document.getElementById('prompt-scope-filter');
+    if (hidden) {
+      if (searchContainer) searchContainer.style.display = 'none';
+      if (panelHeader) panelHeader.style.display = 'none';
+      if (promptTabs) promptTabs.style.display = 'none';
+      if (scopeFilter) scopeFilter.style.display = 'none';
+    } else {
+      if (searchContainer) searchContainer.style.display = '';
+      if (panelHeader) panelHeader.style.display = '';
+      if (promptTabs) promptTabs.style.display = '';
+      if (scopeFilter) scopeFilter.style.display = (this.activeTab === 'markdown') ? 'none' : '';
+    }
+  }
+
+  async handleMarkdownFilesChanged() {
+    await this.loadMarkdownFiles();
+    if (!this.mdOpenFile) return;
+    const exists = this.mdFiles.some(f => f.relPath === this.mdOpenFile);
+    if (!exists) {
+      if (this.mdDirty) { this.mdStaleNotice = true; this.renderMarkdownDetail(); }
+      else { this.closeMarkdownFileImmediate(); }
+      return;
+    }
+    if (this.mdDirty) {
+      this.mdStaleNotice = true;
+      this.renderMarkdownDetail();
+      return;
+    }
+    try {
+      const res = await window.electronAPI.markdownFiles.read(this.mdOpenFile);
+      if (!res?.error && res.content !== this.mdContent) {
+        this.mdContent = res.content;
+        this.mdDraft = res.content;
+        this.mdLoadedMtimeMs = res.mtimeMs;
+        this.renderMarkdownDetail();
+      }
+    } catch (err) {
+      console.error('Failed to reload markdown file:', err);
+    }
+  }
+
+  closeMarkdownFileImmediate() {
+    this.mdOpenFile = null;
+    this.mdDirty = false;
+    this.mdStaleNotice = false;
+    this._mdContentPath = null;
+    this.setMarkdownChromeHidden(false);
+    this.savePanelState();
+    this.renderPrompts();
+  }
+
+  async createNewMarkdownFile() {
+    const name = await this.showInputDialog({
+      title: 'New markdown file',
+      message: 'File name (relative path allowed):',
+      placeholder: 'notes.md',
+      confirmLabel: 'Create'
+    });
+    if (!name || !name.trim()) return;
+    const res = await window.electronAPI.markdownFiles.create(name.trim());
+    if (res?.error) {
+      await this.showChoiceDialog('Could not create file: ' + res.error,
+        [{ value: 'ok', label: 'OK', primary: true }]);
+      return;
+    }
+    await this.loadMarkdownFiles();
+    // Auto-open in edit mode is added in Task 5; for now refresh the list.
+    if (this.openMarkdownFileInEdit) this.openMarkdownFileInEdit(res.relPath);
+  }
+
+  async promptRenameMarkdown(file) {
+    const next = await this.showInputDialog({
+      title: 'Rename file',
+      message: 'New name (relative path allowed):',
+      value: file.relPath,
+      confirmLabel: 'Rename'
+    });
+    if (!next || !next.trim() || next.trim() === file.relPath) return;
+    const res = await window.electronAPI.markdownFiles.rename(file.relPath, next.trim());
+    if (res?.error) {
+      await this.showChoiceDialog('Rename failed: ' + res.error,
+        [{ value: 'ok', label: 'OK', primary: true }]);
+      return;
+    }
+    if (this.mdOpenFile === file.relPath) { this.mdOpenFile = res.relPath; this._mdContentPath = res.relPath; }
+    await this.loadMarkdownFiles();
+    this.renderPrompts();
+  }
+
+  async deleteMarkdownFile(file) {
+    const choice = await this.showChoiceDialog(
+      `Move "${file.relPath}" to the Trash?`,
+      [{ value: 'delete', label: 'Move to Trash', primary: true, danger: true },
+       { value: 'cancel', label: 'Cancel' }]
+    );
+    if (choice !== 'delete') return;
+    const res = await window.electronAPI.markdownFiles.remove(file.relPath);
+    if (res?.error) {
+      await this.showChoiceDialog('Delete failed: ' + res.error,
+        [{ value: 'ok', label: 'OK', primary: true }]);
+      return;
+    }
+    if (this.mdOpenFile === file.relPath) this.closeMarkdownFileImmediate();
+    else { await this.loadMarkdownFiles(); this.renderPrompts(); }
+  }
+
+  /** Modal with N buttons; resolves to the chosen button value, or null if dismissed. */
+  showChoiceDialog(message, buttons) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'prompt-modal-overlay md-dialog-overlay';
+      const box = document.createElement('div');
+      box.className = 'prompt-modal md-dialog';
+
+      const msg = document.createElement('div');
+      msg.className = 'md-dialog-message';
+      msg.textContent = message;
+      box.appendChild(msg);
+
+      const actions = document.createElement('div');
+      actions.className = 'md-dialog-actions';
+      const close = (value) => { overlay.remove(); resolve(value); };
+      for (const b of buttons) {
+        const btn = document.createElement('button');
+        btn.className = 'md-dialog-btn'
+          + (b.primary ? ' primary' : '')
+          + (b.danger ? ' danger' : '');
+        btn.textContent = b.label;
+        btn.addEventListener('click', () => close(b.value));
+        actions.appendChild(btn);
+      }
+      box.appendChild(actions);
+
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(null); });
+      document.addEventListener('keydown', function onKey(e) {
+        if (e.key === 'Escape') { document.removeEventListener('keydown', onKey); close(null); }
+      });
+
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+    });
+  }
+
+  /** Modal with a single text input; resolves to the trimmed value, or null if cancelled. */
+  showInputDialog({ title, message, value = '', placeholder = '', confirmLabel = 'OK' }) {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'prompt-modal-overlay md-dialog-overlay';
+      const box = document.createElement('div');
+      box.className = 'prompt-modal md-dialog';
+
+      if (title) {
+        const h = document.createElement('div');
+        h.className = 'md-dialog-title';
+        h.textContent = title;
+        box.appendChild(h);
+      }
+      if (message) {
+        const m = document.createElement('div');
+        m.className = 'md-dialog-message';
+        m.textContent = message;
+        box.appendChild(m);
+      }
+
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'md-dialog-input';
+      input.value = value;
+      input.placeholder = placeholder;
+      box.appendChild(input);
+
+      const actions = document.createElement('div');
+      actions.className = 'md-dialog-actions';
+      const close = (v) => { overlay.remove(); resolve(v); };
+      const cancelBtn = document.createElement('button');
+      cancelBtn.className = 'md-dialog-btn';
+      cancelBtn.textContent = 'Cancel';
+      cancelBtn.addEventListener('click', () => close(null));
+      const okBtn = document.createElement('button');
+      okBtn.className = 'md-dialog-btn primary';
+      okBtn.textContent = confirmLabel;
+      okBtn.addEventListener('click', () => close(input.value));
+      actions.appendChild(cancelBtn);
+      actions.appendChild(okBtn);
+      box.appendChild(actions);
+
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); close(input.value); }
+        else if (e.key === 'Escape') { e.preventDefault(); close(null); }
+      });
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) close(null); });
+
+      overlay.appendChild(box);
+      document.body.appendChild(overlay);
+      setTimeout(() => { input.focus(); input.select(); }, 0);
+    });
+  }
+
+  renderMarkdownDetail() { /* replaced in Task 5 */ this.renderMarkdownList(); }
+  restoreOpenMarkdownFile() { /* replaced in Task 5 */ this.mdOpenFile = null; this.setMarkdownChromeHidden(false); this.renderMarkdownList(); }
 }
 
 // Export for use in terminal.js

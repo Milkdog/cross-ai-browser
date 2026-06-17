@@ -307,6 +307,11 @@ class PromptLibrary {
           e.stopPropagation();
           return;
         }
+        if (this.activeTab === 'markdown' && this.mdOpenFile) {
+          this.closeMarkdownFile();
+          e.stopPropagation();
+          return;
+        }
         this.closeModal();
       }
       // Cmd/Ctrl + Shift + P to toggle panel
@@ -552,6 +557,8 @@ class PromptLibrary {
         this.panelWidth = state?.width || 300;
         this.activeTab = state?.activeTab || 'prompts';
         this.scopeFilter = state?.scopeFilter || 'all';
+        this.mdOpenFile = state?.mdOpenFile || null;
+        this.mdMode = state?.mdMode || 'view';
 
         this.updatePanelVisibility();
       }
@@ -570,7 +577,9 @@ class PromptLibrary {
           visible: this.panelVisible,
           width: this.panelWidth,
           activeTab: this.activeTab,
-          scopeFilter: this.scopeFilter
+          scopeFilter: this.scopeFilter,
+          mdOpenFile: this.mdOpenFile,
+          mdMode: this.mdMode
         });
       }
     } catch (err) {
@@ -602,8 +611,15 @@ class PromptLibrary {
    * Toggle panel visibility
    */
   togglePanel() {
-    if (this.isInlineEditing) {
-      this.closeInlineEditor();
+    if (this.isInlineEditing) { this.closeInlineEditor(); return; }
+    if (this.panelVisible && this.mdOpenFile && this.mdDirty) {
+      this.confirmDiscardMarkdownIfDirty().then((ok) => {
+        if (!ok) return;
+        this.mdDirty = false;
+        this.panelVisible = false;
+        this.updatePanelVisibility();
+        this.savePanelState();
+      });
       return;
     }
     this.panelVisible = !this.panelVisible;
@@ -3652,7 +3668,7 @@ class PromptLibrary {
     dir.textContent = file.dir;
     main.appendChild(nm);
     main.appendChild(dir);
-    // Open handler is added in Task 5.
+    main.addEventListener('click', () => this.openMarkdownFile(file.relPath));
     row.appendChild(main);
 
     const actions = document.createElement('div');
@@ -3878,8 +3894,201 @@ class PromptLibrary {
     });
   }
 
-  renderMarkdownDetail() { /* replaced in Task 5 */ this.renderMarkdownList(); }
-  restoreOpenMarkdownFile() { /* replaced in Task 5 */ this.mdOpenFile = null; this.setMarkdownChromeHidden(false); this.renderMarkdownList(); }
+  async openMarkdownFile(relPath) {
+    let res;
+    try { res = await window.electronAPI.markdownFiles.read(relPath); }
+    catch (err) { res = { error: err.message }; }
+    if (res?.error) {
+      await this.showChoiceDialog('Could not open file: ' + res.error,
+        [{ value: 'ok', label: 'OK', primary: true }]);
+      return;
+    }
+    this.mdOpenFile = relPath;
+    this.mdContent = res.content;
+    this.mdDraft = res.content;
+    this.mdLoadedMtimeMs = res.mtimeMs;
+    this._mdContentPath = relPath;
+    this.mdDirty = false;
+    this.mdStaleNotice = false;
+    this.mdMode = 'view';
+    this.savePanelState();
+    this.renderPrompts();
+  }
+
+  async openMarkdownFileInEdit(relPath) {
+    await this.openMarkdownFile(relPath);
+    if (this.mdOpenFile === relPath) {
+      this.mdMode = 'edit';
+      this.savePanelState();
+      this.renderMarkdownDetail();
+    }
+  }
+
+  async restoreOpenMarkdownFile() {
+    const relPath = this.mdOpenFile;
+    const desiredMode = this.mdMode;
+    let res;
+    try { res = await window.electronAPI.markdownFiles.read(relPath); }
+    catch (err) { res = { error: err.message }; }
+    if (res?.error) { this.closeMarkdownFileImmediate(); return; }
+    this.mdContent = res.content;
+    this.mdDraft = res.content;
+    this.mdLoadedMtimeMs = res.mtimeMs;
+    this._mdContentPath = relPath;
+    this.mdDirty = false;
+    this.mdMode = desiredMode || 'view';
+    this.renderMarkdownDetail();
+  }
+
+  setMarkdownMode(mode) {
+    if (mode === this.mdMode) return;
+    this.mdMode = mode;
+    this.savePanelState();
+    this.renderMarkdownDetail();
+  }
+
+  async closeMarkdownFile() {
+    if (!(await this.confirmDiscardMarkdownIfDirty())) return;
+    this.closeMarkdownFileImmediate();
+  }
+
+  async confirmDiscardMarkdownIfDirty() {
+    if (!this.mdOpenFile || !this.mdDirty) return true;
+    const choice = await this.showChoiceDialog(
+      `"${this.mdOpenFile}" has unsaved changes.`,
+      [{ value: 'save', label: 'Save', primary: true },
+       { value: 'discard', label: 'Discard', danger: true },
+       { value: 'cancel', label: 'Cancel' }]
+    );
+    if (choice === 'save') return await this.saveMarkdownFile();
+    if (choice === 'discard') return true;
+    return false;
+  }
+
+  async saveMarkdownFile() {
+    if (!this.mdOpenFile) return false;
+    let res;
+    try { res = await window.electronAPI.markdownFiles.write(this.mdOpenFile, this.mdDraft); }
+    catch (err) { res = { error: err.message }; }
+    if (res?.error) {
+      await this.showChoiceDialog('Save failed: ' + res.error,
+        [{ value: 'ok', label: 'OK', primary: true }]);
+      return false;
+    }
+    this.mdContent = this.mdDraft;
+    this.mdDirty = false;
+    this.mdLoadedMtimeMs = res.mtimeMs;
+    this.mdStaleNotice = false;
+    this.renderMarkdownDetail();
+    return true;
+  }
+
+  handleMarkdownLinkClick(e) {
+    const a = e.target.closest('a');
+    if (!a) return;
+    e.preventDefault();
+    const href = a.getAttribute('href');
+    if (href && /^https?:\/\//i.test(href)) {
+      window.electronAPI.markdownFiles.openExternal(href);
+    }
+  }
+
+  renderMarkdownDetail() {
+    this.setMarkdownChromeHidden(true);
+    const container = this.promptsContainer;
+    container.textContent = '';
+
+    const wrap = document.createElement('div');
+    wrap.className = 'md-detail';
+
+    // Header: back · filename(+dirty) · View/Edit toggle · Save
+    const header = document.createElement('div');
+    header.className = 'md-detail-header';
+
+    const back = document.createElement('button');
+    back.className = 'md-back';
+    back.textContent = '←';
+    back.title = 'Back to list';
+    back.addEventListener('click', () => this.closeMarkdownFile());
+
+    const name = document.createElement('span');
+    name.className = 'md-filename';
+    name.textContent = this.mdOpenFile;
+    const dirtyDot = document.createElement('span');
+    dirtyDot.className = 'md-dirty-dot';
+    dirtyDot.textContent = '●';
+    dirtyDot.style.visibility = this.mdDirty ? 'visible' : 'hidden';
+    name.appendChild(document.createTextNode(' '));
+    name.appendChild(dirtyDot);
+
+    const toggle = document.createElement('div');
+    toggle.className = 'md-toggle';
+    const viewBtn = document.createElement('button');
+    viewBtn.textContent = 'View';
+    viewBtn.className = this.mdMode === 'view' ? 'active' : '';
+    viewBtn.addEventListener('click', () => this.setMarkdownMode('view'));
+    const editBtn = document.createElement('button');
+    editBtn.textContent = 'Edit';
+    editBtn.className = this.mdMode === 'edit' ? 'active' : '';
+    editBtn.addEventListener('click', () => this.setMarkdownMode('edit'));
+    toggle.appendChild(viewBtn);
+    toggle.appendChild(editBtn);
+
+    header.appendChild(back);
+    header.appendChild(name);
+    header.appendChild(toggle);
+
+    let saveBtn = null;
+    if (this.mdMode === 'edit') {
+      saveBtn = document.createElement('button');
+      saveBtn.className = 'md-save';
+      saveBtn.textContent = 'Save';
+      saveBtn.disabled = !this.mdDirty;
+      saveBtn.addEventListener('click', () => this.saveMarkdownFile());
+      header.appendChild(saveBtn);
+    }
+    wrap.appendChild(header);
+
+    if (this.mdStaleNotice) {
+      const notice = document.createElement('div');
+      notice.className = 'md-stale-notice';
+      notice.textContent = 'This file changed on disk. Saving overwrites the disk version.';
+      wrap.appendChild(notice);
+    }
+
+    const body = document.createElement('div');
+    body.className = 'md-body';
+    if (this.mdMode === 'view') {
+      const rendered = document.createElement('div');
+      rendered.className = 'md-rendered';
+      // The ONLY sanctioned innerHTML-for-content path: sanitized markdown.
+      rendered.innerHTML = window.DOMPurify.sanitize(window.marked.parse(this.mdDraft || ''));
+      rendered.addEventListener('click', (e) => this.handleMarkdownLinkClick(e));
+      body.appendChild(rendered);
+    } else {
+      const ta = document.createElement('textarea');
+      ta.className = 'md-editor';
+      ta.value = this.mdDraft;
+      ta.spellcheck = false;
+      ta.addEventListener('input', () => {
+        this.mdDraft = ta.value;
+        this.mdDirty = this.mdDraft !== this.mdContent;
+        dirtyDot.style.visibility = this.mdDirty ? 'visible' : 'hidden';
+        if (saveBtn) saveBtn.disabled = !this.mdDirty;
+      });
+      ta.addEventListener('keydown', (e) => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 's') { e.preventDefault(); this.saveMarkdownFile(); }
+      });
+      body.appendChild(ta);
+    }
+    wrap.appendChild(body);
+    container.appendChild(wrap);
+
+    if (this.mdMode === 'edit') {
+      const ta = wrap.querySelector('.md-editor');
+      if (ta) ta.focus();
+    }
+  }
 }
 
 // Export for use in terminal.js

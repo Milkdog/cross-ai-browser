@@ -43,6 +43,14 @@ test('round-trips activeTab and scopeFilter', () => {
   assert.strictEqual(state.width, 360);
 });
 
+test('panel state round-trips mdOpenFile and mdMode', () => {
+  const mgr = makeManager();
+  mgr.setPanelState('tab1', { mdOpenFile: 'docs/x.md', mdMode: 'edit' });
+  const state = mgr.getPanelState('tab1');
+  assert.strictEqual(state.mdOpenFile, 'docs/x.md');
+  assert.strictEqual(state.mdMode, 'edit');
+});
+
 test('partial update preserves existing activeTab/scopeFilter', () => {
   const mgr = makeManager();
   mgr.setPanelState('tab1', { activeTab: 'notes', scopeFilter: 'global' });

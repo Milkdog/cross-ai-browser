@@ -1033,7 +1033,9 @@ class PromptLibraryManager extends EventEmitter {
       visible: saved.visible || false,
       width: saved.width || 300,
       activeTab: saved.activeTab || 'prompts',
-      scopeFilter: saved.scopeFilter || 'all'
+      scopeFilter: saved.scopeFilter || 'all',
+      mdOpenFile: saved.mdOpenFile || null,
+      mdMode: saved.mdMode || 'view'
     };
   }
 
@@ -1049,7 +1051,9 @@ class PromptLibraryManager extends EventEmitter {
       visible: state.visible !== undefined ? state.visible : (prev.visible || false),
       width: state.width !== undefined ? state.width : (prev.width || 300),
       activeTab: state.activeTab !== undefined ? state.activeTab : (prev.activeTab || 'prompts'),
-      scopeFilter: state.scopeFilter !== undefined ? state.scopeFilter : (prev.scopeFilter || 'all')
+      scopeFilter: state.scopeFilter !== undefined ? state.scopeFilter : (prev.scopeFilter || 'all'),
+      mdOpenFile: state.mdOpenFile !== undefined ? state.mdOpenFile : (prev.mdOpenFile || null),
+      mdMode: state.mdMode !== undefined ? state.mdMode : (prev.mdMode || 'view')
     };
     this.store.set('promptPanels', panels);
 

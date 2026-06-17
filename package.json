@@ -14,9 +14,9 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "@electron/rebuild": "^4.0.0",
     "electron": "^40.0.0",
     "electron-builder": "^26.0.0",
-    "@electron/rebuild": "^4.0.0",
     "icon-gen": "^5.0.0"
   },
   "build": {
@@ -46,8 +46,10 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
+    "dompurify": "^3.4.11",
     "electron-store": "^8.2.0",
     "firebase": "^12.7.0",
+    "marked": "^18.0.5",
     "uuid": "^13.0.0",
     "xterm": "^5.3.0",
     "xterm-addon-fit": "^0.8.0"

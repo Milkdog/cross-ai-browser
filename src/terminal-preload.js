@@ -11,6 +11,7 @@ let usageListener = null;
 let themeChangeListener = null;
 let promptLibraryListener = null;
 let streamingStateListener = null;
+let markdownFilesListener = null;
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Send terminal input to main process
@@ -191,6 +192,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
     reveal: (scope, id) => ipcRenderer.invoke('secrets-reveal', { terminalId, scope, id })
   },
 
+  // Markdown files tab APIs
+  markdownFiles: {
+    list: () => ipcRenderer.invoke('markdown-list', { terminalId }),
+    read: (relPath) => ipcRenderer.invoke('markdown-read', { terminalId, relPath }),
+    write: (relPath, content) => ipcRenderer.invoke('markdown-write', { terminalId, relPath, content }),
+    create: (relPath) => ipcRenderer.invoke('markdown-create', { terminalId, relPath }),
+    remove: (relPath) => ipcRenderer.invoke('markdown-delete', { terminalId, relPath }),
+    rename: (fromRel, toRel) => ipcRenderer.invoke('markdown-rename', { terminalId, fromRel, toRel }),
+    openExternal: (url) => ipcRenderer.invoke('open-external', { url }),
+    onFilesChanged: (callback) => {
+      if (markdownFilesListener) {
+        ipcRenderer.removeListener('markdown-files-changed', markdownFilesListener);
+      }
+      markdownFilesListener = () => callback();
+      ipcRenderer.on('markdown-files-changed', markdownFilesListener);
+    }
+  },
+
   // Cleanup listeners when terminal is closed
   cleanup: () => {
     if (dataListener) {
@@ -217,6 +236,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeListener('terminal-streaming-state', streamingStateListener);
       streamingStateListener = null;
     }
+    if (markdownFilesListener) {
+      ipcRenderer.removeListener('markdown-files-changed', markdownFilesListener);
+      markdownFilesListener = null;
+    }
   }
 });
 
@@ -239,5 +262,8 @@ window.addEventListener('beforeunload', () => {
   }
   if (streamingStateListener) {
     ipcRenderer.removeListener('terminal-streaming-state', streamingStateListener);
+  }
+  if (markdownFilesListener) {
+    ipcRenderer.removeListener('markdown-files-changed', markdownFilesListener);
   }
 });

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, ipcMain, globalShortcut, Notification, Menu, dialog, session } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, globalShortcut, Notification, Menu, dialog, session, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -21,6 +21,7 @@ const HooksManager = require('./core/HooksManager');
 const McpPromptServer = require('./core/McpPromptServer');
 const FirebaseSyncAdapter = require('./core/FirebaseSyncAdapter');
 const SecretsManager = require('./core/SecretsManager');
+const MarkdownFilesManager = require('./core/MarkdownFilesManager');
 
 // Firebase configuration (hardcoded for prompt-library-pwa project)
 const FIREBASE_CONFIG = {
@@ -97,6 +98,39 @@ let mcpPromptServer = null;
 let settingsView = null;
 let settingsActive = false;
 let servicePickerWindow = null;
+
+// Markdown files: one manager (+ recursive watcher) per cwd, created lazily when
+// a terminal first lists files. The watcher broadcasts change events to every
+// terminal sharing that cwd.
+const markdownManagers = new Map(); // cwd -> MarkdownFilesManager
+
+function ensureMarkdownManager(cwd) {
+  if (!cwd) return null;
+  let mgr = markdownManagers.get(cwd);
+  if (!mgr) {
+    mgr = new MarkdownFilesManager(cwd, { trash: (p) => shell.trashItem(p) });
+    mgr.watch(() => {
+      viewManager.broadcastToTerminalsWithCwd(cwd, 'markdown-files-changed', {});
+    });
+    markdownManagers.set(cwd, mgr);
+  }
+  return mgr;
+}
+
+function releaseMarkdownManagerIfUnused(cwd) {
+  if (!cwd) return;
+  const tabData = store.get('tabData', {});
+  const stillUsed = Object.values(tabData).some(d => d && d.cwd === cwd);
+  if (!stillUsed) {
+    const mgr = markdownManagers.get(cwd);
+    if (mgr) { mgr.unwatch(); markdownManagers.delete(cwd); }
+  }
+}
+
+function releaseAllMarkdownManagers() {
+  for (const mgr of markdownManagers.values()) mgr.unwatch();
+  markdownManagers.clear();
+}
 
 // Track tabs with unread completions and attention requests (for badge display)
 const tabsWithCompletions = new Set();
@@ -1456,7 +1490,9 @@ ipcMain.on('terminal-shutdown', (event, { terminalId }) => {
 });
 
 ipcMain.on('terminal-close', (event, { terminalId }) => {
+  const cwd = store.get(`tabData.${terminalId}.cwd`);
   closeTab(terminalId, true);
+  releaseMarkdownManagerIfUnused(cwd);
 });
 
 ipcMain.on('terminal-request-usage', async (event, { terminalId }) => {
@@ -1662,6 +1698,62 @@ ipcMain.handle('prompt-library-get', (event, { terminalId }) => {
 
 ipcMain.handle('prompt-library-get-cwd', (event, { terminalId }) => {
   return store.get(`tabData.${terminalId}.cwd`) || null;
+});
+
+// ---- Markdown files tab ----
+ipcMain.handle('markdown-list', (event, { terminalId }) => {
+  const cwd = store.get(`tabData.${terminalId}.cwd`);
+  if (!cwd) return [];
+  try { return ensureMarkdownManager(cwd).list(); }
+  catch (err) { console.error('markdown-list failed:', err); return []; }
+});
+
+ipcMain.handle('markdown-read', (event, { terminalId, relPath }) => {
+  const cwd = store.get(`tabData.${terminalId}.cwd`);
+  if (!cwd) return { error: 'No working directory' };
+  try { return ensureMarkdownManager(cwd).read(relPath); }
+  catch (err) { return { error: err.message }; }
+});
+
+ipcMain.handle('markdown-write', (event, { terminalId, relPath, content }) => {
+  const cwd = store.get(`tabData.${terminalId}.cwd`);
+  if (!cwd) return { error: 'No working directory' };
+  if (typeof content !== 'string') return { error: 'Invalid content' };
+  try { return ensureMarkdownManager(cwd).write(relPath, content); }
+  catch (err) { return { error: err.message }; }
+});
+
+ipcMain.handle('markdown-create', (event, { terminalId, relPath }) => {
+  const cwd = store.get(`tabData.${terminalId}.cwd`);
+  if (!cwd) return { error: 'No working directory' };
+  try { return ensureMarkdownManager(cwd).create(relPath); }
+  catch (err) { return { error: err.message }; }
+});
+
+ipcMain.handle('markdown-delete', async (event, { terminalId, relPath }) => {
+  const cwd = store.get(`tabData.${terminalId}.cwd`);
+  if (!cwd) return { error: 'No working directory' };
+  try { return await ensureMarkdownManager(cwd).delete(relPath); }
+  catch (err) { return { error: err.message }; }
+});
+
+ipcMain.handle('markdown-rename', (event, { terminalId, fromRel, toRel }) => {
+  const cwd = store.get(`tabData.${terminalId}.cwd`);
+  if (!cwd) return { error: 'No working directory' };
+  try { return ensureMarkdownManager(cwd).rename(fromRel, toRel); }
+  catch (err) { return { error: err.message }; }
+});
+
+// Open an http/https link from rendered markdown in the user's default browser.
+ipcMain.handle('open-external', (event, { url }) => {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      shell.openExternal(url);
+      return { ok: true };
+    }
+  } catch {}
+  return { ok: false };
 });
 
 ipcMain.handle('prompt-library-create', async (event, { terminalId, prompt }) => {
@@ -2365,6 +2457,7 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  releaseAllMarkdownManagers();
   if (process.platform !== 'darwin') {
     app.quit();
   }

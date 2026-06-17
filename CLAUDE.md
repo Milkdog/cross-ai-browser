@@ -25,6 +25,7 @@ An Electron app that provides a unified tabbed interface for AI chat services (C
 - `PromptImageManager.js` - Handles image storage, thumbnails, and clipboard operations
 - `PromptStorageEngine.js` - File I/O for prompt library with atomic writes
 - `FirebaseSyncAdapter.js` - Bidirectional Firebase sync for cross-device prompt access
+- `MarkdownFilesManager.js` - Lists/reads/writes/creates/renames/deletes `.md` files under a terminal's cwd (recursive, skips noise dirs), with a recursive fs watcher; path-validates against cwd
 
 ### History Modules (`src/core/history/`)
 - `StorageEngine.js` - File I/O abstraction, atomic writes, path hashing by cwd
@@ -57,6 +58,7 @@ An Electron app that provides a unified tabbed interface for AI chat services (C
 - **electron-store v8** - Using v8 (not v11+) for CommonJS compatibility
 - **Custom user agent** - Strips "Electron" to avoid detection by AI services
 - **Shared design tokens** - Single source of truth for colors, spacing, typography across Electron and PWA
+- **marked + DOMPurify** - The only place `innerHTML` is used for content (Markdown tab renderer); output is always sanitized via `DOMPurify.sanitize(marked.parse(text))` before insertion
 
 ## Design System
 
@@ -201,11 +203,22 @@ Users can convert between types at any time; converting to a note strips incompa
 - Images: `prompt-images/<image-id>.png` with `<image-id>_thumb.png` thumbnails
 
 ### UI
-- **Tabbed layout** - Three tabs (Prompts / Notes / Secrets) with a Global/Project/All scope filter. Prompts tab holds Reusable + Active sections plus collapsible Testing/Done. `activeTab` and `scopeFilter` persist per terminal in panel state. `renderPrompts()` is a router delegating to `renderPromptsTab`/`renderNotesTab`/`renderSecretsTab`.
+- **Tabbed layout** - Four tabs (Prompts / Notes / Secrets / Markdown) with a Global/Project/All scope filter (hidden on the Markdown tab). Prompts tab holds Reusable + Active sections plus collapsible Testing/Done. `activeTab` and `scopeFilter` persist per terminal in panel state. `renderPrompts()` is a router delegating to `renderPromptsTab`/`renderNotesTab`/`renderSecretsTab`/`renderMarkdownTab`.
 - Toggle button in terminal view ("Prompts")
 - Resizable panel (200-500px width)
 - Keyboard shortcut: Cmd+Shift+P to toggle
 - Drag prompt card to terminal to insert
+
+### Markdown Tab
+Provides a master-detail `.md` file browser rooted at the terminal's cwd.
+
+- **File list** - Recursively lists all `.md` files under cwd, skipping `node_modules`, `.git`, `dist`, `build`, `out`, `.next`, `.cache`, `coverage`, `.superpowers` (but descends hidden dirs like `.claude`)
+- **View / Edit** - Toggle between rendered view (HTML via `marked` + `DOMPurify`) and raw edit mode; save writes back to disk
+- **File operations** - Create new `.md` file, rename, delete (delete moves to OS Trash via `shell.trashItem`)
+- **Live refresh** - `MarkdownFilesManager` runs a recursive fs watcher; changes on disk update the list automatically via pushed `markdown-files-changed` IPC event
+- **Persistence** - Open file path and view/edit mode saved in panel state (`mdOpenFile`/`mdMode`) via `PromptLibraryManager` get/setPanelState
+- **Scope filter** - Hidden on this tab (not applicable to filesystem files)
+- **Dependencies** - `marked` and `dompurify` loaded in `terminal.html` before `prompt-library.js`
 
 ### PWA Companion App
 A Progressive Web App for managing prompts from iPhone or any device, synced via Firebase.
@@ -248,7 +261,7 @@ variables into Claude Code terminal PTYs at spawn (project overrides global).
 ## Testing
 No test framework — tests are plain Node scripts in `test/`, run directly (e.g.
 `node test/secrets-manager.test.js`), each exiting non-zero on failure.
-- `test/secrets-manager.test.js`, `test/tab-attribution.test.js`, `test/prompt-panel-state.test.js`
+- `test/secrets-manager.test.js`, `test/tab-attribution.test.js`, `test/prompt-panel-state.test.js`, `test/markdown-files-manager.test.js`
 - **Convention:** core modules take an injectable dependency so they're testable under plain Node without Electron — e.g. SecretsManager takes a fake `encryptor`, PromptLibraryManager a fake `store`. `require('electron')` under plain Node returns a path string, so modules whose constructors touch no Electron APIs (ViewManager) can still be instantiated in tests.
 - Renderer code (`prompt-library.js`, etc.) has no automated tests — verify with `node --check` for syntax plus a manual in-app checklist.
 - Node isn't on PATH by default; prefix with `export PATH="$(echo $HOME/.nvm/versions/node/*/bin):$PATH"`.
@@ -290,6 +303,7 @@ src/
 │   ├── PromptStorageEngine.js # Prompt file I/O
 │   ├── SecretsManager.js      # Encrypted secrets store (global + project env vars)
 │   ├── FirebaseSyncAdapter.js # Firebase bidirectional sync
+│   ├── MarkdownFilesManager.js # .md file listing, CRUD, and fs watcher per cwd
 │   └── history/
 │       ├── StorageEngine.js   # File I/O for history
 │       ├── SessionRecorder.js # PTY output buffering

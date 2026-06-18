@@ -22,6 +22,7 @@ const McpPromptServer = require('./core/McpPromptServer');
 const FirebaseSyncAdapter = require('./core/FirebaseSyncAdapter');
 const SecretsManager = require('./core/SecretsManager');
 const MarkdownFilesManager = require('./core/MarkdownFilesManager');
+const { memoryDirForCwd } = require('./core/claudeMemoryPath');
 
 // Firebase configuration (hardcoded for prompt-library-pwa project)
 const FIREBASE_CONFIG = {
@@ -124,12 +125,54 @@ function releaseMarkdownManagerIfUnused(cwd) {
   if (!stillUsed) {
     const mgr = markdownManagers.get(cwd);
     if (mgr) { mgr.unwatch(); markdownManagers.delete(cwd); }
+    const memEntry = memoryWatchers.get(cwd);
+    if (memEntry) {
+      try { memEntry.watcher.close(); } catch {}
+      clearTimeout(memEntry.timer);
+      memoryWatchers.delete(cwd);
+    }
+    memoryManagers.delete(cwd);
   }
 }
 
 function releaseAllMarkdownManagers() {
   for (const mgr of markdownManagers.values()) mgr.unwatch();
   markdownManagers.clear();
+}
+
+// Memory files: a second MarkdownFilesManager per cwd, rooted at the project's
+// Claude memory dir (~/.claude/projects/<encoded>/memory). The list watcher sits
+// on the PARENT project dir so we also catch the first creation of memory/.
+const memoryManagers = new Map();  // cwd -> MarkdownFilesManager (rooted at memoryDir)
+const memoryWatchers = new Map();  // cwd -> { watcher, timer }
+
+function ensureMemoryManager(cwd) {
+  if (!cwd) return null;
+  const { projectDir, memoryDir } = memoryDirForCwd(cwd);
+  if (!fs.existsSync(projectDir)) return null; // Claude Code never ran here
+  let mgr = memoryManagers.get(cwd);
+  if (!mgr) {
+    mgr = new MarkdownFilesManager(memoryDir, { trash: (p) => shell.trashItem(p) });
+    try {
+      const watcher = fs.watch(projectDir, { recursive: true }, (_event, filename) => {
+        if (filename && !filename.toString().toLowerCase().endsWith('.md')) return;
+        const entry = memoryWatchers.get(cwd);
+        if (entry) {
+          clearTimeout(entry.timer);
+          entry.timer = setTimeout(() => {
+            viewManager.broadcastToTerminalsWithCwd(cwd, 'markdown-files-changed', {});
+          }, 150);
+        }
+      });
+      memoryWatchers.set(cwd, { watcher, timer: null });
+    } catch { /* recursive watch unsupported on this platform */ }
+    memoryManagers.set(cwd, mgr);
+  }
+  return mgr;
+}
+
+function getMarkdownManager(cwd, root) {
+  return root === 'memory' ? ensureMemoryManager(cwd) : ensureMarkdownManager(cwd);
 }
 
 // Track tabs with unread completions and attention requests (for badge display)
@@ -1703,44 +1746,62 @@ ipcMain.handle('prompt-library-get-cwd', (event, { terminalId }) => {
 // ---- Markdown files tab ----
 ipcMain.handle('markdown-list', (event, { terminalId }) => {
   const cwd = store.get(`tabData.${terminalId}.cwd`);
-  if (!cwd) return [];
-  try { return ensureMarkdownManager(cwd).list(); }
-  catch (err) { console.error('markdown-list failed:', err); return []; }
+  if (!cwd) return { project: [], memory: [], memoryAvailable: false };
+  let project = [];
+  try { project = ensureMarkdownManager(cwd).list(); }
+  catch (err) { console.error('markdown-list (project) failed:', err); }
+  const memMgr = ensureMemoryManager(cwd);
+  let memory = [];
+  if (memMgr) {
+    try { memory = memMgr.list(); }
+    catch (err) { console.error('markdown-list (memory) failed:', err); }
+  }
+  return { project, memory, memoryAvailable: !!memMgr };
 });
 
-ipcMain.handle('markdown-read', (event, { terminalId, relPath }) => {
+ipcMain.handle('markdown-read', (event, { terminalId, root, relPath }) => {
   const cwd = store.get(`tabData.${terminalId}.cwd`);
   if (!cwd) return { error: 'No working directory' };
-  try { return ensureMarkdownManager(cwd).read(relPath); }
+  const mgr = getMarkdownManager(cwd, root);
+  if (!mgr) return { error: 'No memory directory' };
+  try { return mgr.read(relPath); }
   catch (err) { return { error: err.message }; }
 });
 
-ipcMain.handle('markdown-write', (event, { terminalId, relPath, content }) => {
+ipcMain.handle('markdown-write', (event, { terminalId, root, relPath, content }) => {
   const cwd = store.get(`tabData.${terminalId}.cwd`);
   if (!cwd) return { error: 'No working directory' };
   if (typeof content !== 'string') return { error: 'Invalid content' };
-  try { return ensureMarkdownManager(cwd).write(relPath, content); }
+  const mgr = getMarkdownManager(cwd, root);
+  if (!mgr) return { error: 'No memory directory' };
+  try { return mgr.write(relPath, content); }
   catch (err) { return { error: err.message }; }
 });
 
-ipcMain.handle('markdown-create', (event, { terminalId, relPath }) => {
+ipcMain.handle('markdown-create', (event, { terminalId, root, relPath }) => {
   const cwd = store.get(`tabData.${terminalId}.cwd`);
   if (!cwd) return { error: 'No working directory' };
-  try { return ensureMarkdownManager(cwd).create(relPath); }
+  const mgr = getMarkdownManager(cwd, root);
+  if (!mgr) return { error: 'No memory directory' };
+  try { return mgr.create(relPath); }
   catch (err) { return { error: err.message }; }
 });
 
-ipcMain.handle('markdown-delete', async (event, { terminalId, relPath }) => {
+ipcMain.handle('markdown-delete', async (event, { terminalId, root, relPath }) => {
   const cwd = store.get(`tabData.${terminalId}.cwd`);
   if (!cwd) return { error: 'No working directory' };
-  try { return await ensureMarkdownManager(cwd).delete(relPath); }
+  const mgr = getMarkdownManager(cwd, root);
+  if (!mgr) return { error: 'No memory directory' };
+  try { return await mgr.delete(relPath); }
   catch (err) { return { error: err.message }; }
 });
 
-ipcMain.handle('markdown-rename', (event, { terminalId, fromRel, toRel }) => {
+ipcMain.handle('markdown-rename', (event, { terminalId, root, fromRel, toRel }) => {
   const cwd = store.get(`tabData.${terminalId}.cwd`);
   if (!cwd) return { error: 'No working directory' };
-  try { return ensureMarkdownManager(cwd).rename(fromRel, toRel); }
+  const mgr = getMarkdownManager(cwd, root);
+  if (!mgr) return { error: 'No memory directory' };
+  try { return mgr.rename(fromRel, toRel); }
   catch (err) { return { error: err.message }; }
 });
 

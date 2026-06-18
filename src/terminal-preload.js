@@ -195,11 +195,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Markdown files tab APIs
   markdownFiles: {
     list: () => ipcRenderer.invoke('markdown-list', { terminalId }),
-    read: (relPath) => ipcRenderer.invoke('markdown-read', { terminalId, relPath }),
-    write: (relPath, content) => ipcRenderer.invoke('markdown-write', { terminalId, relPath, content }),
-    create: (relPath) => ipcRenderer.invoke('markdown-create', { terminalId, relPath }),
-    remove: (relPath) => ipcRenderer.invoke('markdown-delete', { terminalId, relPath }),
-    rename: (fromRel, toRel) => ipcRenderer.invoke('markdown-rename', { terminalId, fromRel, toRel }),
+    read: (root, relPath) => ipcRenderer.invoke('markdown-read', { terminalId, root, relPath }),
+    write: (root, relPath, content) => ipcRenderer.invoke('markdown-write', { terminalId, root, relPath, content }),
+    create: (root, relPath) => ipcRenderer.invoke('markdown-create', { terminalId, root, relPath }),
+    remove: (root, relPath) => ipcRenderer.invoke('markdown-delete', { terminalId, root, relPath }),
+    rename: (root, fromRel, toRel) => ipcRenderer.invoke('markdown-rename', { terminalId, root, fromRel, toRel }),
     openExternal: (url) => ipcRenderer.invoke('open-external', { url }),
     onFilesChanged: (callback) => {
       if (markdownFilesListener) {

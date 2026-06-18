@@ -52,6 +52,12 @@ function makeRoot() {
     assert.strictEqual(row.dir, './');
   });
 
+  test('list rows carry a numeric mtimeMs (date column depends on it)', () => {
+    const row = mgr.list().find(f => f.relPath === 'CLAUDE.md');
+    assert.strictEqual(typeof row.mtimeMs, 'number');
+    assert.ok(row.mtimeMs > 0);
+  });
+
   test('read returns file content', () => {
     assert.strictEqual(mgr.read('CLAUDE.md').content, '# claude');
   });

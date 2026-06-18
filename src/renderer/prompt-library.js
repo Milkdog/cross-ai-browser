@@ -3664,7 +3664,7 @@ class PromptLibrary {
       return;
     }
 
-    if (this.mdMemoryAvailable) {
+    if (this.mdMemoryAvailable && (!q || memoryFiles.length > 0)) {
       container.appendChild(this.buildMarkdownSection(
         'CLAUDE MEMORIES', memoryFiles, 'memory',
         this.mdMemoryCollapsed,
@@ -3673,12 +3673,14 @@ class PromptLibrary {
         memoryFiles.length === 0 ? 'No memories yet. Click + to add one.' : null
       ));
     }
-    container.appendChild(this.buildMarkdownSection(
-      'PROJECT FILES', projectFiles, 'project',
-      this.mdProjectCollapsed,
-      (c) => { this.mdProjectCollapsed = c; this.savePanelState(); },
-      null, null
-    ));
+    if (!q || projectFiles.length > 0) {
+      container.appendChild(this.buildMarkdownSection(
+        'PROJECT FILES', projectFiles, 'project',
+        this.mdProjectCollapsed,
+        (c) => { this.mdProjectCollapsed = c; this.savePanelState(); },
+        null, null
+      ));
+    }
   }
 
   // MEMORY.md pinned first, everything else alphabetical by relPath.

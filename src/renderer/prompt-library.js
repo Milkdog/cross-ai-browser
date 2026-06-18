@@ -834,11 +834,9 @@ class PromptLibrary {
 
     this.updateTabChrome();
 
-    // The Markdown tab is filesystem-based, not scope-based — hide the scope filter.
-    const scopeFilterEl = document.getElementById('prompt-scope-filter');
-    if (scopeFilterEl && !this.isInlineEditing) {
-      scopeFilterEl.style.display = (this.activeTab === 'markdown') ? 'none' : '';
-    }
+    // Panel chrome (header / tabs / scope filter / search) visibility is a pure
+    // function of state — recompute it on every render and tab switch.
+    this.updateChromeVisibility();
 
     this.promptsContainer.textContent = '';
     switch (this.activeTab) {
@@ -3598,7 +3596,7 @@ class PromptLibrary {
     if (this.mdOpenFile) {
       // Detail view lives in Task 5; until then, fall through to a reload.
       if (this._mdContentPath !== this.mdOpenFile) {
-        this.setMarkdownChromeHidden(true);
+        this.updateChromeVisibility();
         this.promptsContainer.textContent = '';
         this.promptsContainer.appendChild(this.buildEmptyState('Loading…'));
         this.restoreOpenMarkdownFile();
@@ -3646,7 +3644,7 @@ class PromptLibrary {
   }
 
   renderMarkdownList() {
-    this.setMarkdownChromeHidden(false);
+    this.updateChromeVisibility();
     const container = this.promptsContainer;
     container.textContent = '';
 
@@ -3806,22 +3804,25 @@ class PromptLibrary {
     return row;
   }
 
-  setMarkdownChromeHidden(hidden) {
-    const searchContainer = document.getElementById('prompt-search-container');
-    const panelHeader = document.getElementById('prompt-panel-header');
-    const promptTabs = document.getElementById('prompt-tabs');
+  /**
+   * Recompute panel chrome visibility from current state. The panel header and
+   * tab bar are ALWAYS visible — including while a markdown doc is open — so the
+   * user can switch tabs at any time. The list search box hides only while a
+   * markdown doc is open (it filters the file list, not the doc); the scope
+   * filter hides on the Markdown tab. No-ops while the inline editor is active,
+   * which manages its own focused chrome.
+   */
+  updateChromeVisibility() {
+    if (this.isInlineEditing) return;
+    const header = document.getElementById('prompt-panel-header');
+    const tabs = document.getElementById('prompt-tabs');
     const scopeFilter = document.getElementById('prompt-scope-filter');
-    if (hidden) {
-      if (searchContainer) searchContainer.style.display = 'none';
-      if (panelHeader) panelHeader.style.display = 'none';
-      if (promptTabs) promptTabs.style.display = 'none';
-      if (scopeFilter) scopeFilter.style.display = 'none';
-    } else {
-      if (searchContainer) searchContainer.style.display = '';
-      if (panelHeader) panelHeader.style.display = '';
-      if (promptTabs) promptTabs.style.display = '';
-      if (scopeFilter) scopeFilter.style.display = (this.activeTab === 'markdown') ? 'none' : '';
-    }
+    const searchContainer = document.getElementById('prompt-search-container');
+    const onMarkdown = this.activeTab === 'markdown';
+    if (header) header.style.display = '';
+    if (tabs) tabs.style.display = '';
+    if (scopeFilter) scopeFilter.style.display = onMarkdown ? 'none' : '';
+    if (searchContainer) searchContainer.style.display = (onMarkdown && this.mdOpenFile) ? 'none' : '';
   }
 
   async handleMarkdownFilesChanged() {
@@ -3866,7 +3867,7 @@ class PromptLibrary {
     this.mdDirty = false;
     this.mdStaleNotice = false;
     this._mdContentPath = null;
-    this.setMarkdownChromeHidden(false);
+    this.updateChromeVisibility();
     this.savePanelState();
     this.renderPrompts();
   }
@@ -4119,7 +4120,7 @@ class PromptLibrary {
   }
 
   renderMarkdownDetail() {
-    this.setMarkdownChromeHidden(true);
+    this.updateChromeVisibility();
     const container = this.promptsContainer;
     container.textContent = '';
 

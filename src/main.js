@@ -138,6 +138,12 @@ function releaseMarkdownManagerIfUnused(cwd) {
 function releaseAllMarkdownManagers() {
   for (const mgr of markdownManagers.values()) mgr.unwatch();
   markdownManagers.clear();
+  for (const entry of memoryWatchers.values()) {
+    try { entry.watcher.close(); } catch {}
+    clearTimeout(entry.timer);
+  }
+  memoryWatchers.clear();
+  memoryManagers.clear();
 }
 
 // Memory files: a second MarkdownFilesManager per cwd, rooted at the project's

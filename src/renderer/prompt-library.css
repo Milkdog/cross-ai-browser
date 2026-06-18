@@ -1770,6 +1770,19 @@
   color: var(--color-text-secondary, #aaa); cursor: pointer;
 }
 .md-row-btn:hover { background: var(--color-bg-elevated, #33333a); color: var(--color-text-primary, #fff); }
+.md-section { margin-bottom: 4px; }
+.md-section .prompt-section-header { display: flex; align-items: center; gap: 6px; }
+.md-section-add {
+  margin-left: auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; padding: 0;
+  background: transparent; border: none; border-radius: var(--radius-sm, 4px);
+  color: var(--color-text-secondary, #aaa); cursor: pointer;
+}
+.md-section-add:hover { background: var(--color-bg-elevated, #33333a); color: var(--color-text-primary, #fff); }
+.md-section-empty {
+  padding: 8px; font-size: 12px; color: var(--color-text-muted, #777);
+}
 
 /* ---------- Markdown tab: dialogs ---------- */
 .md-dialog { min-width: 260px; max-width: 360px; padding: 16px; }

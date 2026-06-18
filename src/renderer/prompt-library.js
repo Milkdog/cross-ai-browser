@@ -39,6 +39,11 @@ class PromptLibrary {
 
     // Markdown tab state
     this.mdFiles = [];
+    this.mdMemoryFiles = [];        // memory-root rows
+    this.mdMemoryAvailable = false; // project dir exists under ~/.claude/projects
+    this.mdOpenRoot = 'project';    // 'project' | 'memory' for the open file
+    this.mdMemoryCollapsed = false; // CLAUDE MEMORIES group collapsed
+    this.mdProjectCollapsed = false;// PROJECT FILES group collapsed
     this.mdOpenFile = null;       // relPath of the open file, or null (list view)
     this.mdMode = 'view';         // 'view' | 'edit'
     this.mdContent = '';          // last content loaded from / saved to disk
@@ -559,6 +564,9 @@ class PromptLibrary {
         this.scopeFilter = state?.scopeFilter || 'all';
         this.mdOpenFile = state?.mdOpenFile || null;
         this.mdMode = state?.mdMode || 'view';
+        this.mdOpenRoot = state?.mdOpenRoot || 'project';
+        this.mdMemoryCollapsed = state?.mdMemoryCollapsed || false;
+        this.mdProjectCollapsed = state?.mdProjectCollapsed || false;
 
         this.updatePanelVisibility();
       }
@@ -579,7 +587,10 @@ class PromptLibrary {
           activeTab: this.activeTab,
           scopeFilter: this.scopeFilter,
           mdOpenFile: this.mdOpenFile,
-          mdMode: this.mdMode
+          mdMode: this.mdMode,
+          mdOpenRoot: this.mdOpenRoot,
+          mdMemoryCollapsed: this.mdMemoryCollapsed,
+          mdProjectCollapsed: this.mdProjectCollapsed
         });
       }
     } catch (err) {
@@ -3615,10 +3626,17 @@ class PromptLibrary {
 
   async loadMarkdownFiles() {
     try {
-      this.mdFiles = (await window.electronAPI.markdownFiles.list()) || [];
+      const res = await window.electronAPI.markdownFiles.list();
+      if (Array.isArray(res)) {
+        this.mdFiles = res; this.mdMemoryFiles = []; this.mdMemoryAvailable = false;
+      } else {
+        this.mdFiles = res?.project || [];
+        this.mdMemoryFiles = res?.memory || [];
+        this.mdMemoryAvailable = !!res?.memoryAvailable;
+      }
     } catch (err) {
       console.error('Failed to list markdown files:', err);
-      this.mdFiles = [];
+      this.mdFiles = []; this.mdMemoryFiles = []; this.mdMemoryAvailable = false;
     }
     this._mdLoaded = true;
     if (this.activeTab === 'markdown' && !this.mdOpenFile) {
@@ -3632,29 +3650,100 @@ class PromptLibrary {
     const container = this.promptsContainer;
     container.textContent = '';
 
-    if (this.mdFiles.length === 0) {
+    const q = this.searchQuery;
+    const match = (f) => !q || f.relPath.toLowerCase().includes(q) || f.name.toLowerCase().includes(q);
+    const projectFiles = this.mdFiles.filter(match);
+    const memoryFiles = this.sortMemoryFiles(this.mdMemoryFiles.filter(match));
+
+    if (this.mdFiles.length === 0 && !this.mdMemoryAvailable) {
       container.appendChild(this.buildEmptyState('No markdown files found. Click + to create one.'));
       return;
     }
-
-    const q = this.searchQuery;
-    const files = q
-      ? this.mdFiles.filter(f =>
-          f.relPath.toLowerCase().includes(q) || f.name.toLowerCase().includes(q))
-      : this.mdFiles;
-
-    if (files.length === 0) {
+    if (q && projectFiles.length === 0 && memoryFiles.length === 0) {
       container.appendChild(this.buildEmptyState('No files match.'));
       return;
     }
 
-    const listEl = document.createElement('div');
-    listEl.className = 'md-list';
-    for (const file of files) listEl.appendChild(this.buildMarkdownRow(file));
-    container.appendChild(listEl);
+    if (this.mdMemoryAvailable) {
+      container.appendChild(this.buildMarkdownSection(
+        'CLAUDE MEMORIES', memoryFiles, 'memory',
+        this.mdMemoryCollapsed,
+        (c) => { this.mdMemoryCollapsed = c; this.savePanelState(); },
+        () => this.createNewMarkdownFile('memory'),
+        memoryFiles.length === 0 ? 'No memories yet. Click + to add one.' : null
+      ));
+    }
+    container.appendChild(this.buildMarkdownSection(
+      'PROJECT FILES', projectFiles, 'project',
+      this.mdProjectCollapsed,
+      (c) => { this.mdProjectCollapsed = c; this.savePanelState(); },
+      null, null
+    ));
   }
 
-  buildMarkdownRow(file) {
+  // MEMORY.md pinned first, everything else alphabetical by relPath.
+  sortMemoryFiles(files) {
+    return [...files].sort((a, b) => {
+      if (a.name === 'MEMORY.md' && b.name !== 'MEMORY.md') return -1;
+      if (b.name === 'MEMORY.md' && a.name !== 'MEMORY.md') return 1;
+      return a.relPath.localeCompare(b.relPath);
+    });
+  }
+
+  // A collapsible group header + a .md-list of rows. onAdd (optional) renders a
+  // "+" button on the header; emptyMsg (optional) shows when the group has no rows.
+  buildMarkdownSection(title, files, root, collapsed, onToggle, onAdd, emptyMsg) {
+    const section = document.createElement('div');
+    section.className = 'prompt-section md-section';
+
+    const header = document.createElement('div');
+    header.className = 'prompt-section-header';
+
+    const toggle = document.createElement('button');
+    toggle.className = 'prompt-section-toggle';
+    toggle.textContent = collapsed ? '▶' : '▼';
+
+    const titleEl = document.createElement('span');
+    titleEl.className = 'prompt-section-title';
+    titleEl.textContent = `${title} (${files.length})`;
+
+    header.appendChild(toggle);
+    header.appendChild(titleEl);
+
+    if (onAdd) {
+      const addBtn = document.createElement('button');
+      addBtn.className = 'md-section-add';
+      addBtn.title = 'New memory file';
+      addBtn.appendChild(this.createIcon('plus', 14));
+      addBtn.addEventListener('click', (e) => { e.stopPropagation(); onAdd(); });
+      header.appendChild(addBtn);
+    }
+
+    const listEl = document.createElement('div');
+    listEl.className = 'md-list';
+    if (collapsed) listEl.style.display = 'none';
+    if (files.length === 0 && emptyMsg) {
+      const hint = document.createElement('div');
+      hint.className = 'md-section-empty';
+      hint.textContent = emptyMsg;
+      listEl.appendChild(hint);
+    } else {
+      for (const file of files) listEl.appendChild(this.buildMarkdownRow(file, root));
+    }
+
+    header.addEventListener('click', () => {
+      collapsed = !collapsed;
+      toggle.textContent = collapsed ? '▶' : '▼';
+      listEl.style.display = collapsed ? 'none' : 'flex';
+      onToggle(collapsed);
+    });
+
+    section.appendChild(header);
+    section.appendChild(listEl);
+    return section;
+  }
+
+  buildMarkdownRow(file, root = 'project') {
     const row = document.createElement('div');
     row.className = 'md-row';
 
@@ -3668,7 +3757,7 @@ class PromptLibrary {
     dir.textContent = file.dir;
     main.appendChild(nm);
     main.appendChild(dir);
-    main.addEventListener('click', () => this.openMarkdownFile(file.relPath));
+    main.addEventListener('click', () => this.openMarkdownFile(file.relPath, root));
     row.appendChild(main);
 
     const actions = document.createElement('div');
@@ -3678,13 +3767,13 @@ class PromptLibrary {
     renameBtn.className = 'md-row-btn';
     renameBtn.title = 'Rename';
     renameBtn.appendChild(this.createIcon('edit', 14));
-    renameBtn.addEventListener('click', (e) => { e.stopPropagation(); this.promptRenameMarkdown(file); });
+    renameBtn.addEventListener('click', (e) => { e.stopPropagation(); this.promptRenameMarkdown(file, root); });
 
     const delBtn = document.createElement('button');
     delBtn.className = 'md-row-btn';
     delBtn.title = 'Delete';
     delBtn.appendChild(this.createIcon('trash', 14));
-    delBtn.addEventListener('click', (e) => { e.stopPropagation(); this.deleteMarkdownFile(file); });
+    delBtn.addEventListener('click', (e) => { e.stopPropagation(); this.deleteMarkdownFile(file, root); });
 
     actions.appendChild(renameBtn);
     actions.appendChild(delBtn);
@@ -3714,16 +3803,15 @@ class PromptLibrary {
     await this.loadMarkdownFiles();
     if (!this.mdOpenFile) return;
     const onMarkdownTab = this.activeTab === 'markdown';
-    const exists = this.mdFiles.some(f => f.relPath === this.mdOpenFile);
+    const list = this.mdOpenRoot === 'memory' ? this.mdMemoryFiles : this.mdFiles;
+    const exists = list.some(f => f.relPath === this.mdOpenFile);
     if (!exists) {
-      // Open file was removed/renamed on disk.
       if (this.mdDirty) {
         this.mdStaleNotice = true;
         if (onMarkdownTab) this.renderMarkdownDetail();
       } else if (onMarkdownTab) {
         this.closeMarkdownFileImmediate();
       } else {
-        // Off-tab: drop the open file without touching chrome; the list shows on return.
         this.mdOpenFile = null;
         this._mdContentPath = null;
         this.savePanelState();
@@ -3736,7 +3824,7 @@ class PromptLibrary {
       return;
     }
     try {
-      const res = await window.electronAPI.markdownFiles.read(this.mdOpenFile);
+      const res = await window.electronAPI.markdownFiles.read(this.mdOpenRoot, this.mdOpenFile);
       if (!res?.error && res.content !== this.mdContent) {
         this.mdContent = res.content;
         this.mdDraft = res.content;
@@ -3758,26 +3846,25 @@ class PromptLibrary {
     this.renderPrompts();
   }
 
-  async createNewMarkdownFile() {
+  async createNewMarkdownFile(root = 'project') {
     const name = await this.showInputDialog({
-      title: 'New markdown file',
+      title: root === 'memory' ? 'New memory file' : 'New markdown file',
       message: 'File name (relative path allowed):',
-      placeholder: 'notes.md',
+      placeholder: root === 'memory' ? 'note.md' : 'notes.md',
       confirmLabel: 'Create'
     });
     if (!name || !name.trim()) return;
-    const res = await window.electronAPI.markdownFiles.create(name.trim());
+    const res = await window.electronAPI.markdownFiles.create(root, name.trim());
     if (res?.error) {
       await this.showChoiceDialog('Could not create file: ' + res.error,
         [{ value: 'ok', label: 'OK', primary: true }]);
       return;
     }
     await this.loadMarkdownFiles();
-    // Auto-open in edit mode is added in Task 5; for now refresh the list.
-    if (this.openMarkdownFileInEdit) this.openMarkdownFileInEdit(res.relPath);
+    if (this.openMarkdownFileInEdit) this.openMarkdownFileInEdit(res.relPath, root);
   }
 
-  async promptRenameMarkdown(file) {
+  async promptRenameMarkdown(file, root = 'project') {
     const next = await this.showInputDialog({
       title: 'Rename file',
       message: 'New name (relative path allowed):',
@@ -3785,31 +3872,33 @@ class PromptLibrary {
       confirmLabel: 'Rename'
     });
     if (!next || !next.trim() || next.trim() === file.relPath) return;
-    const res = await window.electronAPI.markdownFiles.rename(file.relPath, next.trim());
+    const res = await window.electronAPI.markdownFiles.rename(root, file.relPath, next.trim());
     if (res?.error) {
       await this.showChoiceDialog('Rename failed: ' + res.error,
         [{ value: 'ok', label: 'OK', primary: true }]);
       return;
     }
-    if (this.mdOpenFile === file.relPath) { this.mdOpenFile = res.relPath; this._mdContentPath = res.relPath; }
+    if (this.mdOpenFile === file.relPath && this.mdOpenRoot === root) {
+      this.mdOpenFile = res.relPath; this._mdContentPath = res.relPath;
+    }
     await this.loadMarkdownFiles();
     this.renderPrompts();
   }
 
-  async deleteMarkdownFile(file) {
+  async deleteMarkdownFile(file, root = 'project') {
     const choice = await this.showChoiceDialog(
       `Move "${file.relPath}" to the Trash?`,
       [{ value: 'delete', label: 'Move to Trash', primary: true, danger: true },
        { value: 'cancel', label: 'Cancel' }]
     );
     if (choice !== 'delete') return;
-    const res = await window.electronAPI.markdownFiles.remove(file.relPath);
+    const res = await window.electronAPI.markdownFiles.remove(root, file.relPath);
     if (res?.error) {
       await this.showChoiceDialog('Delete failed: ' + res.error,
         [{ value: 'ok', label: 'OK', primary: true }]);
       return;
     }
-    if (this.mdOpenFile === file.relPath) this.closeMarkdownFileImmediate();
+    if (this.mdOpenFile === file.relPath && this.mdOpenRoot === root) this.closeMarkdownFileImmediate();
     else { await this.loadMarkdownFiles(); this.renderPrompts(); }
   }
 
@@ -3904,15 +3993,16 @@ class PromptLibrary {
     });
   }
 
-  async openMarkdownFile(relPath) {
+  async openMarkdownFile(relPath, root = 'project') {
     let res;
-    try { res = await window.electronAPI.markdownFiles.read(relPath); }
+    try { res = await window.electronAPI.markdownFiles.read(root, relPath); }
     catch (err) { res = { error: err.message }; }
     if (res?.error) {
       await this.showChoiceDialog('Could not open file: ' + res.error,
         [{ value: 'ok', label: 'OK', primary: true }]);
       return;
     }
+    this.mdOpenRoot = root;
     this.mdOpenFile = relPath;
     this.mdContent = res.content;
     this.mdDraft = res.content;
@@ -3925,8 +4015,8 @@ class PromptLibrary {
     this.renderPrompts();
   }
 
-  async openMarkdownFileInEdit(relPath) {
-    await this.openMarkdownFile(relPath);
+  async openMarkdownFileInEdit(relPath, root = 'project') {
+    await this.openMarkdownFile(relPath, root);
     if (this.mdOpenFile === relPath) {
       this.mdMode = 'edit';
       this.savePanelState();
@@ -3938,7 +4028,7 @@ class PromptLibrary {
     const relPath = this.mdOpenFile;
     const desiredMode = this.mdMode;
     let res;
-    try { res = await window.electronAPI.markdownFiles.read(relPath); }
+    try { res = await window.electronAPI.markdownFiles.read(this.mdOpenRoot, relPath); }
     catch (err) { res = { error: err.message }; }
     if (res?.error) { this.closeMarkdownFileImmediate(); return; }
     this.mdContent = res.content;
@@ -3978,7 +4068,7 @@ class PromptLibrary {
   async saveMarkdownFile() {
     if (!this.mdOpenFile) return false;
     let res;
-    try { res = await window.electronAPI.markdownFiles.write(this.mdOpenFile, this.mdDraft); }
+    try { res = await window.electronAPI.markdownFiles.write(this.mdOpenRoot, this.mdOpenFile, this.mdDraft); }
     catch (err) { res = { error: err.message }; }
     if (res?.error) {
       await this.showChoiceDialog('Save failed: ' + res.error,

@@ -3667,7 +3667,7 @@ class PromptLibrary {
     if (this.mdMemoryAvailable && (!q || memoryFiles.length > 0)) {
       container.appendChild(this.buildMarkdownSection(
         'CLAUDE MEMORIES', memoryFiles, 'memory',
-        this.mdMemoryCollapsed,
+        q ? false : this.mdMemoryCollapsed,
         (c) => { this.mdMemoryCollapsed = c; this.savePanelState(); },
         () => this.createNewMarkdownFile('memory'),
         memoryFiles.length === 0 ? 'No memories yet. Click + to add one.' : null
@@ -3676,7 +3676,7 @@ class PromptLibrary {
     if (!q || projectFiles.length > 0) {
       container.appendChild(this.buildMarkdownSection(
         'PROJECT FILES', projectFiles, 'project',
-        this.mdProjectCollapsed,
+        q ? false : this.mdProjectCollapsed,
         (c) => { this.mdProjectCollapsed = c; this.savePanelState(); },
         null, null
       ));

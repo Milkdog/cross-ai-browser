@@ -3745,6 +3745,23 @@ class PromptLibrary {
     return section;
   }
 
+  // Hybrid last-modified label: today / yesterday / N days ago through 6 days,
+  // then an absolute date (MMM D, plus year when it differs from now).
+  formatMtime(mtimeMs) {
+    if (!mtimeMs) return '';
+    const then = new Date(mtimeMs);
+    const now = new Date();
+    const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const dayDiff = Math.round((startOfDay(now) - startOfDay(then)) / 86400000);
+    if (dayDiff <= 0) return 'today';
+    if (dayDiff === 1) return 'yesterday';
+    if (dayDiff < 7) return `${dayDiff} days ago`;
+    const sameYear = then.getFullYear() === now.getFullYear();
+    return then.toLocaleDateString(undefined, sameYear
+      ? { month: 'short', day: 'numeric' }
+      : { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+
   buildMarkdownRow(file, root = 'project') {
     const row = document.createElement('div');
     row.className = 'md-row';
@@ -3761,6 +3778,12 @@ class PromptLibrary {
     main.appendChild(dir);
     main.addEventListener('click', () => this.openMarkdownFile(file.relPath, root));
     row.appendChild(main);
+
+    const date = document.createElement('div');
+    date.className = 'md-row-date';
+    date.textContent = this.formatMtime(file.mtimeMs);
+    if (file.mtimeMs) date.title = new Date(file.mtimeMs).toLocaleString();
+    row.appendChild(date);
 
     const actions = document.createElement('div');
     actions.className = 'md-row-actions';

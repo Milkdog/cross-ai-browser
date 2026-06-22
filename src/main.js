@@ -663,9 +663,11 @@ function createViewForTab(tab) {
       // Verify directory still exists
       try {
         if (fs.existsSync(data.cwd) && fs.statSync(data.cwd).isDirectory()) {
-          // Store cwd in tab for later use when PTY is spawned
+          // Store cwd for later use when the PTY is spawned. Mark the tab as
+          // restored so the resize handler offers a Resume/New/Close choice
+          // instead of auto-continuing on app restart.
           tab.cwd = data.cwd;
-          tab.mode = 'continue'; // Auto-resume on app restart
+          tab.restored = true;
         }
       } catch {
         // Directory doesn't exist, will need to be set up again
@@ -1455,7 +1457,7 @@ ipcMain.on('terminal-resize', (event, { terminalId, cols, rows }) => {
   // Try to get cwd from tab or from tabData store
   let cwd = tab.cwd;
   let mode = tab.mode || 'normal';
-  let restoredFromStore = false;
+  let restored = !!tab.restored;
 
   if (!cwd) {
     const tabData = store.get('tabData', {});
@@ -1463,12 +1465,12 @@ ipcMain.on('terminal-resize', (event, { terminalId, cols, rows }) => {
     if (data && data.cwd) {
       cwd = data.cwd;
       tab.cwd = cwd; // Cache it on the tab object
-      restoredFromStore = true;
+      restored = true; // recovered from store => not brand-new
     }
   }
 
   if (cwd) {
-    if (restoredFromStore && !tab.mode) {
+    if (restored && !tab.mode && !viewManager.hasTerminalPty(terminalId)) {
       // Restored (non-brand-new) tab with no running session: let the user
       // choose Resume / New / Close instead of silently auto-continuing.
       viewManager.presentSessionChoice(terminalId, cols, rows);

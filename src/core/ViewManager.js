@@ -1084,6 +1084,14 @@ class ViewManager {
   }
 
   /**
+   * @param {string} tabId
+   * @returns {boolean} whether a live PTY currently exists for this tab
+   */
+  hasTerminalPty(tabId) {
+    return this.terminalPtys.has(tabId);
+  }
+
+  /**
    * Handle terminal resize
    * @param {string} tabId - The tab ID
    * @param {number} cols - New columns

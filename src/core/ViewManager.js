@@ -91,6 +91,9 @@ class ViewManager {
     this.terminalReadyState = new Map();
     this.terminalOutputBuffer = new Map();
     this.terminalPromptState = new Map();
+    // Tabs showing the Resume/New/Close choice overlay (no PTY running). While a
+    // tab is in here, a resize must NOT lazily auto-spawn a session behind it.
+    this.awaitingSessionChoice = new Set();
 
     // History session tracking: tabId -> sessionId
     this.terminalSessions = new Map();
@@ -973,6 +976,8 @@ class ViewManager {
         this._sendTerminalError(tabId, 'Error: "claude" command not found. Please install Claude Code CLI first.');
       }
       view.webContents.send('terminal-exit', { exitCode, signal });
+      // The overlay is now up; don't let a stray resize auto-spawn behind it.
+      this.awaitingSessionChoice.add(tabId);
     }
 
     this.terminalPtys.delete(tabId);
@@ -1054,6 +1059,31 @@ class ViewManager {
   }
 
   /**
+   * Offer the Resume / New Session / Close choice for a non-brand-new terminal
+   * instead of auto-starting a session. Records the latest size and asks the
+   * renderer to show the overlay; does NOT spawn a PTY. Idempotent.
+   * @param {string} tabId
+   * @param {number} cols
+   * @param {number} rows
+   */
+  presentSessionChoice(tabId, cols = 80, rows = 30) {
+    // A session is already running, or there's no view to show the overlay in.
+    if (this.terminalPtys.get(tabId)) return;
+    const view = this.terminalViews.get(tabId);
+    if (!view || view.webContents.isDestroyed()) return;
+
+    const promptState = this.terminalPromptState.get(tabId);
+    if (promptState) {
+      promptState.cols = cols;
+      promptState.rows = rows;
+    }
+
+    if (this.awaitingSessionChoice.has(tabId)) return; // overlay already requested
+    this.awaitingSessionChoice.add(tabId);
+    view.webContents.send('terminal-show-session-choice');
+  }
+
+  /**
    * Handle terminal resize
    * @param {string} tabId - The tab ID
    * @param {number} cols - New columns
@@ -1076,6 +1106,8 @@ class ViewManager {
         // Resize may fail if process is dead
       }
     } else if (cwd && this.terminalReadyState.get(tabId)) {
+      // Don't auto-spawn while the user is being asked to choose Resume/New.
+      if (this.awaitingSessionChoice.has(tabId)) return;
       // PTY not spawned yet - spawn it now
       this.setupTerminalPty(tabId, cwd, cols, rows, mode);
     }
@@ -1089,6 +1121,7 @@ class ViewManager {
   reloadTerminal(tabId, cwd) {
     const view = this.terminalViews.get(tabId);
     if (!view || view.webContents.isDestroyed()) return;
+    this.awaitingSessionChoice.delete(tabId);
 
     // Kill existing PTY
     const existingPty = this.terminalPtys.get(tabId);
@@ -1144,6 +1177,7 @@ class ViewManager {
     if (view && !view.webContents.isDestroyed()) {
       view.webContents.send('terminal-data', '\r\n\x1b[90mClaude Code has been shut down.\x1b[0m\r\n');
       view.webContents.send('terminal-exit', { exitCode: 0, signal: null });
+      this.awaitingSessionChoice.add(tabId);
     }
 
     // Notify sidebar that terminal stopped
@@ -1160,6 +1194,7 @@ class ViewManager {
   resumeTerminal(tabId, cwd) {
     const view = this.terminalViews.get(tabId);
     if (!view || view.webContents.isDestroyed()) return;
+    this.awaitingSessionChoice.delete(tabId);
 
     const existingPty = this.terminalPtys.get(tabId);
     if (existingPty) {
@@ -1371,6 +1406,7 @@ class ViewManager {
     this.terminalReadyState.delete(tabId);
     this.terminalOutputBuffer.delete(tabId);
     this.terminalPromptState.delete(tabId);
+    this.awaitingSessionChoice.delete(tabId);
     this._clearStreamingTimeout(tabId);
     this.subagentDepth.delete(tabId);
 

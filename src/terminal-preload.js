@@ -12,6 +12,7 @@ let themeChangeListener = null;
 let promptLibraryListener = null;
 let streamingStateListener = null;
 let markdownFilesListener = null;
+let sessionChoiceListener = null;
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Send terminal input to main process
@@ -103,6 +104,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }
     streamingStateListener = (event, streaming) => callback(streaming);
     ipcRenderer.on('terminal-streaming-state', streamingStateListener);
+  },
+
+  // Listen for a request to show the Resume/New/Close session-choice overlay
+  onShowSessionChoice: (callback) => {
+    if (sessionChoiceListener) {
+      ipcRenderer.removeListener('terminal-show-session-choice', sessionChoiceListener);
+    }
+    sessionChoiceListener = () => callback();
+    ipcRenderer.on('terminal-show-session-choice', sessionChoiceListener);
   },
 
   // Prompt Library APIs
@@ -240,6 +250,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.removeListener('markdown-files-changed', markdownFilesListener);
       markdownFilesListener = null;
     }
+    if (sessionChoiceListener) {
+      ipcRenderer.removeListener('terminal-show-session-choice', sessionChoiceListener);
+      sessionChoiceListener = null;
+    }
   }
 });
 
@@ -265,5 +279,8 @@ window.addEventListener('beforeunload', () => {
   }
   if (markdownFilesListener) {
     ipcRenderer.removeListener('markdown-files-changed', markdownFilesListener);
+  }
+  if (sessionChoiceListener) {
+    ipcRenderer.removeListener('terminal-show-session-choice', sessionChoiceListener);
   }
 });

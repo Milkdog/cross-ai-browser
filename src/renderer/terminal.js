@@ -302,8 +302,12 @@ terminal.attachCustomKeyEventHandler((e) => {
 // Focus terminal on load
 terminal.focus();
 
-// Handle process exit - show reload/close options
-window.electronAPI.onExit(({ exitCode, signal }) => {
+// Show the Resume / New Session / Close Tab overlay. Used both when a running
+// Claude Code session exits and when a non-brand-new tab is opened with no
+// session running (restored after a restart, previously shut down, etc.).
+function showSessionChoiceOverlay() {
+  // Never stack overlays.
+  if (document.getElementById('exit-overlay')) return;
 
   // Create exit overlay using safe DOM methods
   const overlay = document.createElement('div');
@@ -318,7 +322,11 @@ window.electronAPI.onExit(({ exitCode, signal }) => {
 
   const title = document.createElement('div');
   title.className = 'exit-title';
-  title.textContent = 'Claude Code has exited';
+  title.textContent = 'Claude Code isn\'t running in this tab';
+
+  const subtitle = document.createElement('div');
+  subtitle.className = 'exit-subtitle';
+  subtitle.textContent = 'Resume your previous session, or start a new one.';
 
   const buttons = document.createElement('div');
   buttons.className = 'exit-buttons';
@@ -355,6 +363,7 @@ window.electronAPI.onExit(({ exitCode, signal }) => {
   buttons.appendChild(closeBtn);
   message.appendChild(icon);
   message.appendChild(title);
+  message.appendChild(subtitle);
   message.appendChild(buttons);
   overlay.appendChild(message);
 
@@ -387,6 +396,11 @@ window.electronAPI.onExit(({ exitCode, signal }) => {
     .exit-title {
       font-size: 18px;
       font-weight: 500;
+      margin-bottom: 8px;
+    }
+    .exit-subtitle {
+      font-size: 14px;
+      color: #a0a0a0;
       margin-bottom: 24px;
     }
     .exit-buttons {
@@ -453,7 +467,13 @@ window.electronAPI.onExit(({ exitCode, signal }) => {
   closeBtn.addEventListener('click', () => {
     window.electronAPI.close();
   });
-});
+}
+
+// A running session exited (/exit, crash, or manual shutdown).
+window.electronAPI.onExit(() => showSessionChoiceOverlay());
+
+// A non-brand-new tab was opened with no session running (e.g. after restart).
+window.electronAPI.onShowSessionChoice(() => showSessionChoiceOverlay());
 
 // Live countdown state \u2014 last payload from main caches percent + resetsAt,
 // then a 1s tick recomputes the time-remaining string locally so the clock

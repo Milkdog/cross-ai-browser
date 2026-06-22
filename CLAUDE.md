@@ -139,6 +139,11 @@ The terminal (`terminal.js`) implements smart auto-scrolling:
 - Distinguishes between user scrolls and programmatic scrolls
 - Resets to auto-scroll when user scrolls back to bottom
 
+### Terminal Session Start / Resume
+- Brand-new terminal tabs (created with `+`) start a fresh `claude` session immediately.
+- Any non-brand-new tab with no running session — restored after an app restart, `/exit`ed, crashed, or manually shut down — shows a Resume / New Session / Close Tab overlay instead of auto-starting. Resume runs `claude --continue`; New starts fresh.
+- Implemented via `ViewManager.awaitingSessionChoice` + `presentSessionChoice()` (gates the lazy resize-driven PTY spawn) and the renderer's `showSessionChoiceOverlay()` (triggered by `terminal-exit` and `terminal-show-session-choice`).
+
 ## Terminal Session History
 Claude Code terminal sessions are automatically captured and persisted for later review.
 

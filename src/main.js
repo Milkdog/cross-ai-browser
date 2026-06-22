@@ -1455,6 +1455,7 @@ ipcMain.on('terminal-resize', (event, { terminalId, cols, rows }) => {
   // Try to get cwd from tab or from tabData store
   let cwd = tab.cwd;
   let mode = tab.mode || 'normal';
+  let restoredFromStore = false;
 
   if (!cwd) {
     const tabData = store.get('tabData', {});
@@ -1462,17 +1463,20 @@ ipcMain.on('terminal-resize', (event, { terminalId, cols, rows }) => {
     if (data && data.cwd) {
       cwd = data.cwd;
       tab.cwd = cwd; // Cache it on the tab object
-      // When restoring from store, use continue mode
-      if (!tab.mode) {
-        mode = 'continue';
-      }
+      restoredFromStore = true;
     }
   }
 
   if (cwd) {
-    viewManager.handleTerminalResize(terminalId, cols, rows, cwd, mode);
-    // Clear mode after first use
-    tab.mode = 'normal';
+    if (restoredFromStore && !tab.mode) {
+      // Restored (non-brand-new) tab with no running session: let the user
+      // choose Resume / New / Close instead of silently auto-continuing.
+      viewManager.presentSessionChoice(terminalId, cols, rows);
+    } else {
+      viewManager.handleTerminalResize(terminalId, cols, rows, cwd, mode);
+      // Clear mode after first use
+      tab.mode = 'normal';
+    }
   } else {
     viewManager.handleTerminalResize(terminalId, cols, rows);
   }
